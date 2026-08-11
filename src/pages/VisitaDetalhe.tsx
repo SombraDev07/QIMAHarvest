@@ -10,11 +10,10 @@ import {
   percentualDesconto,
   salvarAcumulado,
   salvarDadosVisita,
+  useParametros,
   useVisita,
 } from '../store'
 import {
-  CAIXA_FITA_MAX,
-  CAIXA_FITA_MIN,
   CLASSIFICACOES,
   ORIGENS_ACUMULADO,
   type AbaVisita,
@@ -420,6 +419,9 @@ function AbaAnalise({
                     <span className="alerta__corpo">
                       <span className="alerta__regra">{a.regra}</span>
                     </span>
+                    <span className={`chip chip--responsavel-${a.responsavel}`}>
+                      {a.responsavel === 'operacao' ? 'Operação' : 'Analista'}
+                    </span>
                     {a.valor && <span className="alerta__valor">{a.valor}</span>}
                     {a.cargaId && <span className="alerta__id mono">carga {a.cargaId}</span>}
                     <span className="alerta__ir">Ir ao ponto →</span>
@@ -446,6 +448,9 @@ function CartaoAlerta({ alerta, onIr }: { alerta: Alerta; onIr: (a: Alerta) => v
         <span className="cartao-alerta__sev">
           <IconAlerta size={14} />
           {alerta.severidade === 'erro' ? 'ERRO' : 'ATENÇÃO'}
+        </span>
+        <span className={`chip chip--responsavel-${alerta.responsavel}`}>
+          {alerta.responsavel === 'operacao' ? 'Operação' : 'Analista'}
         </span>
         {alerta.valor && <span className="cartao-alerta__valor">{alerta.valor}</span>}
       </span>
@@ -696,14 +701,19 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
             }
           />
 
+          <CaixaFitaQuestion
+            valor={d.caixaFitaTeste}
+            onChange={(q) => set({ caixaFitaTeste: q })}
+          />
+
           <Question
-            numero="2.6"
-            texto="Número da caixa de fita teste"
-            hint={`Valor permitido de ${CAIXA_FITA_MIN} a ${CAIXA_FITA_MAX}.`}
+            numero="2.7"
+            texto="O PDR guarda as fitas testadas de forma associável às cargas?"
+            hint="Se não, a Operação precisa revisar o processo de rastreabilidade da unidade."
             controle={
-              <CaixaFitaTeste
-                valor={d.caixaFitaTeste}
-                onChange={(q) => set({ caixaFitaTeste: q })}
+              <SimNaoInput
+                valor={d.fitasAssociaveisCargas}
+                onChange={(v) => set({ fitasAssociaveisCargas: v })}
               />
             }
           />
@@ -713,38 +723,52 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
   )
 }
 
-/** entrada numérica com trava de faixa e stepper */
-function CaixaFitaTeste({ valor, onChange }: { valor: number; onChange: (v: number) => void }) {
+/** pergunta 2.6 + stepper — faixa configurável em Administração → Parâmetros */
+function CaixaFitaQuestion({
+  valor,
+  onChange,
+}: {
+  valor: number
+  onChange: (v: number) => void
+}) {
+  const { caixaFitaMin, caixaFitaMax } = useParametros()
   const limitar = (v: number) =>
-    Math.max(CAIXA_FITA_MIN, Math.min(CAIXA_FITA_MAX, Number.isFinite(v) ? Math.round(v) : 0))
+    Math.max(caixaFitaMin, Math.min(caixaFitaMax, Number.isFinite(v) ? Math.round(v) : 0))
 
   return (
-    <div className="stepper">
-      <button
-        type="button"
-        onClick={() => onChange(limitar(valor - 1))}
-        disabled={valor <= CAIXA_FITA_MIN}
-        aria-label="Diminuir"
-      >
-        −
-      </button>
-      <input
-        type="number"
-        min={CAIXA_FITA_MIN}
-        max={CAIXA_FITA_MAX}
-        value={valor}
-        onChange={(e) => onChange(limitar(Number(e.target.value)))}
-      />
-      <button
-        type="button"
-        onClick={() => onChange(limitar(valor + 1))}
-        disabled={valor >= CAIXA_FITA_MAX}
-        aria-label="Aumentar"
-      >
-        +
-      </button>
-      <span className="stepper__faixa">/ {CAIXA_FITA_MAX}</span>
-    </div>
+    <Question
+      numero="2.6"
+      texto="Número da caixa de fita teste"
+      hint={`Valor permitido de ${caixaFitaMin} a ${caixaFitaMax}.`}
+      controle={
+        <div className="stepper">
+          <button
+            type="button"
+            onClick={() => onChange(limitar(valor - 1))}
+            disabled={valor <= caixaFitaMin}
+            aria-label="Diminuir"
+          >
+            −
+          </button>
+          <input
+            type="number"
+            min={caixaFitaMin}
+            max={caixaFitaMax}
+            value={valor}
+            onChange={(e) => onChange(limitar(Number(e.target.value)))}
+          />
+          <button
+            type="button"
+            onClick={() => onChange(limitar(valor + 1))}
+            disabled={valor >= caixaFitaMax}
+            aria-label="Aumentar"
+          >
+            +
+          </button>
+          <span className="stepper__faixa">/ {caixaFitaMax}</span>
+        </div>
+      }
+    />
   )
 }
 

@@ -1015,6 +1015,18 @@ tr.in-group td:first-child {
   color: var(--brand-600);
 }
 
+.chip--responsavel-analista {
+  background: #f1edff;
+  border-color: #d9cdff;
+  color: var(--violet);
+}
+
+.chip--responsavel-operacao {
+  background: #eef4ff;
+  border-color: #cfdcfb;
+  color: var(--blue);
+}
+
 .chip--info {
   background: #eef2ff;
   border-color: #cbd6f8;
@@ -2289,6 +2301,40 @@ tr.is-foco > td:first-child {
   font-size: 13.5px;
   font-weight: 750;
   letter-spacing: -0.2px;
+}
+
+.regras-lista {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 6px 14px;
+}
+
+.regra-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 12.5px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.regra-toggle input[type='checkbox'] {
+  flex: none;
+  margin-top: 2px;
+}
+
+.regra-toggle__codigo {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-soft);
+  min-width: 34px;
+}
+
+.regra-toggle__label {
+  color: var(--text-muted);
+  line-height: 1.4;
 }
 
 .bloco__titulo::before {

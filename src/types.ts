@@ -71,6 +71,8 @@ export interface Carga {
   acompanhada: boolean
   /** evidência fotográfica da carga (placa/romaneio), quando enviada pelo tablet */
   fotoUrl?: string
+  /** tecnologia (trait) da semente foi testada em laboratório */
+  tecnologiaTestada?: boolean
 }
 
 /** Bloco 2 — Dados da Visita */
@@ -84,9 +86,14 @@ export interface DadosVisita {
   retesteSolicitante: string
   retesteMotivo: string
   houveOcorrencia: SimNao
-  /** número da caixa de fita teste — 0 a 300 */
+  /** número da caixa de fita teste — faixa definida em Administração → Parâmetros */
   caixaFitaTeste: number
+  /** o PDR guarda as fitas testadas de forma associável às cargas? */
+  fitasAssociaveisCargas: SimNao
 }
+
+/** quem deve tratar o alerta — usado para decidir a fila de correção */
+export type Responsavel = 'analista' | 'operacao'
 
 /** mensagem da conversa entre os analistas sobre a visita */
 export interface Mensagem {
@@ -117,8 +124,8 @@ export interface Validacao {
   atencoes: number
 }
 
-export const CAIXA_FITA_MIN = 0
-export const CAIXA_FITA_MAX = 300
+export const CAIXA_FITA_MIN = 1
+export const CAIXA_FITA_MAX = 100
 
 /** Origem do acumulado registrado para a unidade */
 export type OrigemAcumulado = 'PDR' | 'RTV' | 'B2B'
@@ -312,4 +319,27 @@ export interface Solicitacao {
   criadoEm: number
   atualizadoEm: number
   mensagens: MensagemSolicitacao[]
+}
+
+/* ================================================================= *
+ * Parâmetros — regras de análise da visita configuráveis pela
+ * Administração, e a mensagem padrão usada em "Enviar erros ao chat"
+ * ================================================================= */
+export interface ParametrosRegras {
+  /** % de desconto acima do qual a carga é considerada erro */
+  limiteDescontoErro: number
+  /** quantidade mínima de caracteres para uma placa ser válida */
+  minDigitosPlaca: number
+  /** salto tolerado entre romaneios consecutivos da mesma visita */
+  saltoMaxRomaneio: number
+  /** faixa válida do número da caixa de fita teste */
+  caixaFitaMin: number
+  caixaFitaMax: number
+  /**
+   * mensagem padrão enviada ao chat da visita ao clicar em "Enviar erros
+   * ao chat" — aceita o placeholder {quantidade}
+   */
+  mensagemErroChat: string
+  /** liga/desliga cada regra do catálogo (chave = código, ex. "3.4.7") — ausente/true = ativa */
+  regrasAtivas: Record<string, boolean>
 }

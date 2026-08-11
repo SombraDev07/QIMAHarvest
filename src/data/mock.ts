@@ -344,7 +344,8 @@ function gerarDadosVisita(temCargas: boolean, cancelada: boolean): DadosVisita {
     retesteSolicitante: reteste === 'Sim' ? pick(SOLICITANTES_RETESTE) : '',
     retesteMotivo: reteste === 'Sim' ? pick(MOTIVOS_RETESTE) : '',
     houveOcorrencia: 'Não',
-    caixaFitaTeste: temCargas ? int(1, 300) : 0,
+    caixaFitaTeste: temCargas ? int(1, 100) : 0,
+    fitasAssociaveisCargas: simNao(0.92),
   }
 }
 
@@ -617,6 +618,7 @@ const VISITA_TESTE_MUNICIPIO_PAULISTA: Visita = {
     retesteMotivo: '',
     houveOcorrencia: 'Não',
     caixaFitaTeste: 0,
+    fitasAssociaveisCargas: 'Sim',
   },
   acumulado: {
     informadoPeloPdr: 'Não',

@@ -1,24 +1,28 @@
 import { useSyncExternalStore } from 'react'
 import { VISITAS_INICIAIS, PDRS_CATALOGO_INICIAIS, SOLICITACOES_INICIAIS } from './data/mock'
+import { regrasAtivasPadrao } from './regras'
 import { USUARIO } from './usuario'
-import type {
-  Acumulado,
-  AcumuladoImportado,
-  AnexoArquivo,
-  Carga,
-  Classificacao,
-  DadosVisita,
-  DetalheAcumuladoImportado,
-  ErroLiberado,
-  GrupoRateio,
-  Mensagem,
-  PdrCatalogo,
-  RelatorioAcumulado,
-  Solicitacao,
-  StatusSolicitacao,
-  SituacaoId,
-  TipoSolicitacao,
-  Visita,
+import {
+  CAIXA_FITA_MAX,
+  CAIXA_FITA_MIN,
+  type Acumulado,
+  type AcumuladoImportado,
+  type AnexoArquivo,
+  type Carga,
+  type Classificacao,
+  type DadosVisita,
+  type DetalheAcumuladoImportado,
+  type ErroLiberado,
+  type GrupoRateio,
+  type Mensagem,
+  type ParametrosRegras,
+  type PdrCatalogo,
+  type RelatorioAcumulado,
+  type Solicitacao,
+  type StatusSolicitacao,
+  type SituacaoId,
+  type TipoSolicitacao,
+  type Visita,
 } from './types'
 
 /* ------------------------------------------------------------------ *
@@ -308,6 +312,7 @@ export function criarVisitaFake(pdr: PdrCatalogo, data: string): Visita {
       retesteMotivo: '',
       houveOcorrencia: 'Não',
       caixaFitaTeste: 0,
+      fitasAssociaveisCargas: 'Sim',
     },
     acumulado: {
       informadoPeloPdr: 'Não',
@@ -601,4 +606,44 @@ export function adicionarParticipante(id: string, nome: string) {
       ? s
       : { ...s, participantes: [...s.participantes, nome] },
   )
+}
+
+/* ------------------------------------------------------------------ *
+ * Parâmetros — regras de análise da visita e mensagem padrão do chat,
+ * configurados em Administração → Parâmetros
+ * ------------------------------------------------------------------ */
+const PARAMETROS_INICIAIS: ParametrosRegras = {
+  limiteDescontoErro: 25,
+  minDigitosPlaca: 6,
+  saltoMaxRomaneio: 500,
+  caixaFitaMin: CAIXA_FITA_MIN,
+  caixaFitaMax: CAIXA_FITA_MAX,
+  mensagemErroChat: '⚠️ {quantidade} erro(s) encontrado(s) na visita:',
+  regrasAtivas: regrasAtivasPadrao(),
+}
+
+let parametros: ParametrosRegras = PARAMETROS_INICIAIS
+const ouvintesParametros = new Set<() => void>()
+
+function notificarParametros() {
+  ouvintesParametros.forEach((fn) => fn())
+}
+
+/** para uso em componentes React — reage a alterações feitas em Parâmetros */
+export function useParametros(): ParametrosRegras {
+  return useSyncExternalStore(
+    (fn) => { ouvintesParametros.add(fn); return () => ouvintesParametros.delete(fn) },
+    () => parametros,
+    () => parametros,
+  )
+}
+
+/** para uso fora de componentes (ex.: analise.ts) — lê o valor atual sem se inscrever */
+export function obterParametros(): ParametrosRegras {
+  return parametros
+}
+
+export function salvarParametros(novo: ParametrosRegras) {
+  parametros = novo
+  notificarParametros()
 }

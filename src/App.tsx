@@ -5,6 +5,7 @@ import { IconAlerta, IconFotos, IconRelatorios, IconRotas } from './components/i
 import Acumulado from './pages/Acumulado'
 import Administracao from './pages/Administracao'
 import EmBreve from './pages/EmBreve'
+import Parametros from './pages/Parametros'
 import PDRs from './pages/PDRs'
 import Solicitacoes from './pages/Solicitacoes'
 import VisitaDetalhe from './pages/VisitaDetalhe'
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/visitas" replace />} />
         <Route path="/administracao" element={<Administracao />} />
         <Route path="/administracao/pdrs" element={<PDRs />} />
+        <Route path="/administracao/parametros" element={<Parametros />} />
         <Route path="/acumulado" element={<Acumulado />} />
         <Route path="/visitas" element={<Visitas />} />
         <Route path="/visitas/:situacao" element={<VisitasLista />} />

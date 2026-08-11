@@ -121,7 +121,7 @@ export default function TabelaDivergencias({
                             key={a.id}
                             className={`tag-problema tag-problema--${a.severidade}`}
                             style={{ marginBottom: 4 }}
-                            title={a.detalhe}
+                            title={`${a.detalhe} · Responsável: ${a.responsavel === 'operacao' ? 'Operação' : 'Analista'}`}
                           >
                             <IconAlerta size={12} /> {a.regra}
                           </div>

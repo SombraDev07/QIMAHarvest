@@ -6,6 +6,7 @@ import {
   certificarVisita,
   enviarMensagem,
   enviarParaOperacao,
+  obterParametros,
   registrarValidacao,
 } from '../store'
 import { aplicarLiberacoes, type Alerta } from '../analise'
@@ -159,7 +160,12 @@ function formatarErrosParaChat(erros: Alerta[]) {
     const valor = e.valor ? ` (${e.valor})` : ''
     return `• ${alvo} — ${e.regra}${valor}: ${e.detalhe}`
   })
-  return `⚠️ ${erros.length} erro(s) encontrado(s) na visita:\n${linhas.join('\n')}`
+  // cabeçalho configurável em Administração → Parâmetros
+  const cabecalho = obterParametros().mensagemErroChat.replace(
+    '{quantidade}',
+    String(erros.length),
+  )
+  return `${cabecalho}\n${linhas.join('\n')}`
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,12 +1,14 @@
 import { historicoAcumuladoPorCnpj } from './data/mock'
-import { gruposDeRateio, percentualDesconto } from './store'
-import { CAIXA_FITA_MAX, CAIXA_FITA_MIN, CLASSIFICACOES } from './types'
-import type { AbaVisita, AcumuladoPeriodo, ErroLiberado, Visita } from './types'
+import { gruposDeRateio, obterParametros, percentualDesconto } from './store'
+import { CLASSIFICACOES } from './types'
+import type { AbaVisita, AcumuladoPeriodo, Carga, Classificacao, ErroLiberado, Responsavel, Visita } from './types'
 
 export type Severidade = 'erro' | 'atencao'
 
 export interface Alerta {
   id: string
+  /** código da regra no catálogo (Administração → Parâmetros) — ex.: "3.4.7" */
+  codigo: string
   severidade: Severidade
   /** nome curto da regra quebrada */
   regra: string
@@ -18,122 +20,360 @@ export interface Alerta {
   cargaId?: string
   /** valor que disparou a regra, exibido em destaque */
   valor?: string
+  /** quem deve tratar — Analista ou Operação */
+  responsavel: Responsavel
 }
-
-/* limites de negócio */
-export const LIMITE_DESCONTO_ERRO = 30
-/** placa válida tem ao menos 6 caracteres alfanuméricos */
-export const MIN_DIGITOS_PLACA = 6
-/** salto tolerado entre romaneios consecutivos da mesma visita */
-export const SALTO_MAX_ROMANEIO = 500
 
 const kg = (n: number) => `${Math.round(n).toLocaleString('pt-BR')} kg`
 const pct = (n: number) =>
   `${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
 
+/** padrões de placa/peso claramente fictícios usados só para preencher o formulário */
+const PLACAS_FICTICIAS = /^(AAA|ABC|XXX|ZZZ|000|123|TEST)/i
+const PESOS_FICTICIOS = new Set([999, 1000, 1999, 2000, 2999, 3000, 5000, 9999, 10000])
+
+/** minutos entre dois horários "HH:MM" da mesma data */
+function diferencaMinutos(h1: string, h2: string): number {
+  const [h1h, h1m] = h1.split(':').map(Number)
+  const [h2h, h2m] = h2.split(':').map(Number)
+  return Math.abs(h1h * 60 + h1m - (h2h * 60 + h2m))
+}
+
+type CampoNumericoPeriodo = 'negativa' | 'declarada' | 'positiva' | 'participante'
+
+const CAMPO_PERIODO: Record<Classificacao, CampoNumericoPeriodo> = {
+  Negativa: 'negativa',
+  Declarada: 'declarada',
+  Positiva: 'positiva',
+  Participante: 'participante',
+}
+
 /**
- * Percorre a visita aplicando as regras de consistência.
- * Cada alerta carrega a aba (e a carga) de destino para o clique levar
- * o analista direto ao ponto do problema.
+ * Percorre a visita aplicando o catálogo de regras (Formulário, Acumulado,
+ * Cargas, Rateio e Cargas Não Acompanhadas). Os limites numéricos que têm
+ * equivalente em Administração → Parâmetros vêm de lá, assim como o
+ * liga/desliga de cada regra (regrasAtivas, por código).
+ *
+ * Cada alerta carrega a aba/carga de destino (pro clique levar direto ao
+ * ponto do problema) e um responsável (Analista/Operação). Regra geral:
+ * carga com erro/atenção e sem foto anexada vai sempre para a Operação,
+ * independente do responsável padrão da regra.
  */
 export function analisarVisita(visita: Visita): Alerta[] {
+  const {
+    limiteDescontoErro: LIMITE_DESCONTO_ERRO,
+    minDigitosPlaca: MIN_DIGITOS_PLACA,
+    saltoMaxRomaneio: SALTO_MAX_ROMANEIO,
+    caixaFitaMin: CAIXA_FITA_MIN,
+    caixaFitaMax: CAIXA_FITA_MAX,
+    regrasAtivas,
+  } = obterParametros()
+
   const alertas: Alerta[] = []
-  const add = (a: Alerta) => alertas.push(a)
+  const cargaPorId = new Map(visita.cargas.map((c) => [c.id, c]))
+
+  function add(
+    a: Omit<Alerta, 'responsavel'> & { responsavel?: Responsavel },
+  ) {
+    if (regrasAtivas[a.codigo] === false) return
+    const carga = a.cargaId ? cargaPorId.get(a.cargaId) : undefined
+    // observação do catálogo: carga com problema e sem foto vai pra Operação
+    const semFoto = !!carga && !carga.fotoUrl
+    alertas.push({ ...a, responsavel: semFoto ? 'operacao' : a.responsavel ?? 'analista' })
+  }
+
   // toda carga com problema é revisada e editada na aba Divergências,
   // independente de ela estar ou não acompanhada pelo consultor
-  const abaDaCarga = (_acompanhada: boolean): AbaVisita => 'divergencias'
+  const abaCarga: AbaVisita = 'divergencias'
 
-  /* ----------------------------------------------------------- cargas */
-  const romaneios = new Map<string, number>()
+  /* ================================================================ *
+   * 3. Cargas (regras 3.1 a 3.7 — aplicadas também às não acompanhadas,
+   * conforme seção 5) + 5. Cargas Não Acompanhadas (5.1 a 5.3)
+   * ================================================================ */
+  const romaneios = new Map<string, Carga[]>()
+  const pesos = new Map<string, Carga[]>()
 
   visita.cargas.forEach((c) => {
     const p = percentualDesconto(c)
 
-    if (c.pesoComDesconto > c.pesoLiquido) {
+    // 3.1.1 — horário dentro da janela da visita (sem dado de auditor itinerante, tratado como aviso)
+    if (c.hora < visita.horaInicio || c.hora > visita.horaFim) {
+      add({
+        id: `${c.id}-fora-horario`,
+        codigo: '3.1.1',
+        severidade: 'atencao',
+        regra: 'Carga fora do horário de atuação (3.1.1)',
+        detalhe: `Carga ${c.id} lançada às ${c.hora}, fora da janela ${visita.horaInicio}–${visita.horaFim} da visita.`,
+        aba: abaCarga,
+        cargaId: c.id,
+      })
+    }
+
+    // 3.1.2 — mesma data da visita
+    if (c.data !== visita.data) {
+      add({
+        id: `${c.id}-data-divergente`,
+        codigo: '3.1.2',
+        severidade: 'erro',
+        regra: 'Data da carga diferente da visita (3.1.2)',
+        detalhe: `Carga ${c.id} está datada de ${c.data}, mas a visita é de ${visita.data}.`,
+        aba: abaCarga,
+        cargaId: c.id,
+      })
+    }
+
+    // 3.2.3 — produtor não informado
+    if (!c.produtor.trim()) {
+      add({
+        id: `${c.id}-sem-produtor`,
+        codigo: '3.2.3',
+        severidade: 'erro',
+        regra: 'Produtor não informado (3.2.3)',
+        detalhe: `Carga ${c.id} foi lançada sem o nome do produtor.`,
+        aba: abaCarga,
+        cargaId: c.id,
+      })
+    } else if (/ {2,}/.test(c.produtor) || /\d/.test(c.produtor) || /[^A-Za-zÀ-ÿ .'-]/.test(c.produtor)) {
+      // 3.5.1 — inconsistências no nome do produtor
+      add({
+        id: `${c.id}-produtor-inconsistente`,
+        codigo: '3.5.1',
+        severidade: 'atencao',
+        regra: 'Produtor com inconsistências (3.5.1)',
+        detalhe: `Carga ${c.id}: nome do produtor "${c.produtor}" tem espaços duplos, número ou caractere inválido.`,
+        aba: abaCarga,
+        cargaId: c.id,
+      })
+    }
+
+    // 3.2.4 — os dois pesos não informados
+    if (c.pesoLiquido <= 0 && c.pesoComDesconto <= 0) {
+      add({
+        id: `${c.id}-sem-pesos`,
+        codigo: '3.2.4',
+        severidade: 'erro',
+        regra: 'Peso líquido e com desconto não informados (3.2.4)',
+        detalhe: `Carga ${c.id} (placa ${c.placa}) está sem os dois pesos.`,
+        aba: abaCarga,
+        cargaId: c.id,
+      })
+    } else if (c.pesoComDesconto > c.pesoLiquido) {
+      // 3.4.4
       add({
         id: `${c.id}-peso-invertido`,
+        codigo: '3.4.4',
         severidade: 'erro',
-        regra: 'Peso com desconto maior que o líquido',
+        regra: 'Peso com desconto maior que o líquido (3.4.4)',
         detalhe: `Carga ${c.id} (placa ${c.placa}): líquido ${kg(c.pesoLiquido)} e com desconto ${kg(c.pesoComDesconto)}.`,
-        aba: abaDaCarga(c.acompanhada),
+        aba: abaCarga,
         cargaId: c.id,
         valor: kg(c.pesoComDesconto - c.pesoLiquido),
       })
     } else if (p > LIMITE_DESCONTO_ERRO) {
+      // 3.4.7
       add({
         id: `${c.id}-desconto-alto`,
+        codigo: '3.4.7',
         severidade: 'erro',
-        regra: `Desconto acima de ${LIMITE_DESCONTO_ERRO}%`,
+        regra: `Desconto acima de ${LIMITE_DESCONTO_ERRO}% (3.4.7)`,
         detalhe: `Carga ${c.id} (placa ${c.placa}, romaneio ${c.romaneio || '—'}): desconto de ${kg(c.pesoLiquido - c.pesoComDesconto)} sobre ${kg(c.pesoLiquido)}.`,
-        aba: abaDaCarga(c.acompanhada),
+        aba: abaCarga,
         cargaId: c.id,
         valor: pct(p),
       })
     }
 
+    if (c.pesoLiquido > 0) {
+      if (c.pesoLiquido < 10) {
+        // 3.4.2
+        add({
+          id: `${c.id}-peso-minusculo`,
+          codigo: '3.4.2',
+          severidade: 'erro',
+          regra: 'Peso menor que 10 kg (3.4.2)',
+          detalhe: `Carga ${c.id}: peso líquido de ${kg(c.pesoLiquido)} é praticamente zero.`,
+          aba: abaCarga,
+          cargaId: c.id,
+        })
+      } else if (c.pesoLiquido > 100000) {
+        // 3.4.3
+        add({
+          id: `${c.id}-peso-absurdo`,
+          codigo: '3.4.3',
+          severidade: 'erro',
+          regra: 'Peso acima de 100.000 kg (3.4.3)',
+          detalhe: `Carga ${c.id}: peso líquido de ${kg(c.pesoLiquido)} está fora de qualquer capacidade de caminhão.`,
+          aba: abaCarga,
+          cargaId: c.id,
+        })
+      } else if (c.pesoLiquido > 55000) {
+        // 3.4.1
+        add({
+          id: `${c.id}-peso-tara`,
+          codigo: '3.4.1',
+          severidade: 'atencao',
+          regra: 'Peso acima de 55.000 kg — possível tara (3.4.1)',
+          detalhe: `Carga ${c.id}: peso líquido de ${kg(c.pesoLiquido)} sugere que a tara não foi descontada.`,
+          aba: abaCarga,
+          cargaId: c.id,
+        })
+      } else if (PESOS_FICTICIOS.has(Math.round(c.pesoLiquido / 1000) * 1000) || PESOS_FICTICIOS.has(c.pesoLiquido)) {
+        // 3.4.6
+        add({
+          id: `${c.id}-peso-ficticio`,
+          codigo: '3.4.6',
+          severidade: 'atencao',
+          regra: 'Possível peso fictício (3.4.6)',
+          detalhe: `Carga ${c.id}: peso líquido de ${kg(c.pesoLiquido)} é um valor redondo comum de preenchimento de teste.`,
+          aba: abaCarga,
+          cargaId: c.id,
+        })
+      }
+    }
+
     if (!c.romaneio.trim()) {
+      // 3.2.2
       add({
         id: `${c.id}-sem-romaneio`,
+        codigo: '3.2.2',
         severidade: 'erro',
-        regra: 'Carga sem romaneio',
+        regra: 'Carga sem romaneio (3.2.2)',
         detalhe: `Carga ${c.id} (placa ${c.placa}) foi lançada sem número de romaneio.`,
-        aba: abaDaCarga(c.acompanhada),
+        aba: abaCarga,
         cargaId: c.id,
       })
     } else {
-      romaneios.set(c.romaneio, (romaneios.get(c.romaneio) ?? 0) + 1)
+      if (!/^\d+$/.test(c.romaneio.trim())) {
+        // 3.6.1 — letras/prefixo fora do padrão numérico
+        add({
+          id: `${c.id}-romaneio-fora-padrao`,
+          codigo: '3.6.1',
+          severidade: 'atencao',
+          regra: 'Romaneio fora do padrão (3.6.1)',
+          detalhe: `Carga ${c.id}: romaneio "${c.romaneio}" tem letras ou prefixo diferente do padrão numérico da unidade.`,
+          aba: abaCarga,
+          cargaId: c.id,
+        })
+      }
+      const lista = romaneios.get(c.romaneio) ?? []
+      lista.push(c)
+      romaneios.set(c.romaneio, lista)
     }
 
     const placa = c.placa.replace(/[^A-Za-z0-9]/g, '')
     if (!placa) {
+      // 3.2.1 / 3.3.1
       add({
         id: `${c.id}-sem-placa`,
+        codigo: '3.2.1',
         severidade: 'erro',
-        regra: 'Carga sem placa',
+        regra: 'Carga sem placa (3.2.1/3.3.1)',
         detalhe: `Carga ${c.id} foi lançada sem placa do caminhão.`,
-        aba: abaDaCarga(c.acompanhada),
+        aba: abaCarga,
         cargaId: c.id,
       })
     } else if (placa.length < MIN_DIGITOS_PLACA) {
+      // 3.3.2
       add({
         id: `${c.id}-placa-curta`,
+        codigo: '3.3.2',
         severidade: 'erro',
-        regra: `Placa com menos de ${MIN_DIGITOS_PLACA} caracteres`,
+        regra: `Placa com menos de ${MIN_DIGITOS_PLACA} caracteres (3.3.2)`,
         detalhe: `Carga ${c.id}: a placa "${c.placa}" tem ${placa.length} caracteres — provável digitação incompleta.`,
-        aba: abaDaCarga(c.acompanhada),
+        aba: abaCarga,
         cargaId: c.id,
         valor: c.placa,
       })
-    }
-
-    if (c.pesoLiquido <= 0) {
+    } else if (PLACAS_FICTICIAS.test(placa)) {
+      // 3.3.3 (opcional/alerta)
       add({
-        id: `${c.id}-peso-zero`,
-        severidade: 'erro',
-        regra: 'Peso líquido zerado',
-        detalhe: `Carga ${c.id} (placa ${c.placa}) está sem peso líquido.`,
-        aba: abaDaCarga(c.acompanhada),
+        id: `${c.id}-placa-ficticia`,
+        codigo: '3.3.3',
+        severidade: 'atencao',
+        regra: 'Possível placa fictícia (3.3.3)',
+        detalhe: `Carga ${c.id}: a placa "${c.placa}" segue um padrão comum de preenchimento de teste.`,
+        aba: abaCarga,
         cargaId: c.id,
       })
     }
+
+    if (c.pesoLiquido <= 0 && c.pesoComDesconto > 0) {
+      add({
+        id: `${c.id}-peso-zero`,
+        codigo: '3.4.8',
+        severidade: 'erro',
+        regra: 'Peso líquido zerado',
+        detalhe: `Carga ${c.id} (placa ${c.placa}) está sem peso líquido.`,
+        aba: abaCarga,
+        cargaId: c.id,
+      })
+    }
+
+    if (c.tecnologiaTestada === false) {
+      // 3.7.1
+      add({
+        id: `${c.id}-tecnologia-nao-testada`,
+        codigo: '3.7.1',
+        severidade: 'atencao',
+        regra: 'Tecnologia marcada como não testada (3.7.1)',
+        detalhe: `Carga ${c.id} (placa ${c.placa}) está com a tecnologia da semente sem teste de laboratório.`,
+        aba: abaCarga,
+        cargaId: c.id,
+      })
+    }
+
+    const pesoChave = `${c.pesoLiquido}|${c.pesoComDesconto}`
+    if (c.pesoLiquido > 0) {
+      const lista = pesos.get(pesoChave) ?? []
+      lista.push(c)
+      pesos.set(pesoChave, lista)
+    }
   })
 
-  // romaneio repetido dentro da mesma visita
-  romaneios.forEach((qtd, romaneio) => {
-    if (qtd < 2) return
-    const envolvidas = visita.cargas.filter((c) => c.romaneio === romaneio)
+  // 3.4.5 — todas as cargas da visita sem peso com desconto informado
+  if (visita.cargas.length > 0 && visita.cargas.every((c) => c.pesoComDesconto <= 0)) {
+    add({
+      id: 'v-sem-peso-desconto',
+      codigo: '3.4.5',
+      severidade: 'erro',
+      regra: 'Nenhuma carga com peso com desconto informado (3.4.5)',
+      detalhe: 'Todas as cargas da visita estão sem o peso com desconto preenchido.',
+      aba: 'visita',
+    })
+  }
+
+  // 3.6.2 — romaneio duplicado quando o rateio é NÃO (dentro do mesmo grupo acompanhada/não)
+  romaneios.forEach((cargas, romaneio) => {
+    const semRateio = cargas.filter((c) => !c.rateio)
+    if (semRateio.length < 2) return
     add({
       id: `romaneio-${romaneio}`,
+      codigo: '3.6.2',
       severidade: 'erro',
-      regra: 'Romaneio duplicado',
-      detalhe: `O romaneio ${romaneio} aparece em ${qtd} cargas: ${envolvidas.map((c) => c.id).join(', ')}.`,
-      aba: abaDaCarga(envolvidas[0].acompanhada),
-      cargaId: envolvidas[0].id,
-      valor: `${qtd}×`,
+      regra: 'Romaneio duplicado (3.6.2)',
+      detalhe: `O romaneio ${romaneio} aparece em ${semRateio.length} cargas sem rateio: ${semRateio.map((c) => c.id).join(', ')}.`,
+      aba: abaCarga,
+      cargaId: semRateio[0].id,
+      valor: `${semRateio.length}×`,
     })
   })
 
-  // salto grande entre romaneios consecutivos da mesma visita
+  // 4.8 — peso duplicado entre cargas (aviso se alguma estiver em rateio, erro se nenhuma estiver)
+  pesos.forEach((cargas) => {
+    if (cargas.length < 2) return
+    const algumRateio = cargas.some((c) => c.rateio)
+    add({
+      id: `peso-dup-${cargas[0].id}`,
+      codigo: '4.8',
+      severidade: algumRateio ? 'atencao' : 'erro',
+      regra: 'Peso duplicado entre cargas (4.8)',
+      detalhe: `${cargas.length} cargas com o mesmo peso líquido/com desconto: ${cargas.map((c) => c.id).join(', ')}.`,
+      aba: abaCarga,
+      cargaId: cargas[0].id,
+    })
+  })
+
+  // salto grande entre romaneios consecutivos da mesma visita (3.6.1)
   const sequencia = visita.cargas
     .filter((c) => /^\d+$/.test(c.romaneio.trim()))
     .map((c) => ({ carga: c, numero: Number(c.romaneio) }))
@@ -144,21 +384,61 @@ export function analisarVisita(visita: Visita): Alerta[] {
     if (salto <= SALTO_MAX_ROMANEIO) continue
     add({
       id: `salto-${sequencia[i].carga.id}`,
+      codigo: '3.6.1',
       severidade: 'erro',
-      regra: `Salto de romaneio acima de ${SALTO_MAX_ROMANEIO}`,
+      regra: `Salto de romaneio acima de ${SALTO_MAX_ROMANEIO} (3.6.1)`,
       detalhe: `Do romaneio ${sequencia[i - 1].numero} (carga ${sequencia[i - 1].carga.id}) para ${sequencia[i].numero} (carga ${sequencia[i].carga.id}) há um salto de ${salto.toLocaleString('pt-BR')} números.`,
-      aba: abaDaCarga(sequencia[i].carga.acompanhada),
+      aba: abaCarga,
       cargaId: sequencia[i].carga.id,
       valor: `+${salto.toLocaleString('pt-BR')}`,
     })
   }
 
-  /* --------------------------------------------------------- rateios */
+  /* ================================================================ *
+   * 5. Cargas Não Acompanhadas — validações extras (5.1 e 5.3;
+   * 5.2 já está coberta por 3.1.1 aplicada a todas as cargas acima)
+   * ================================================================ */
+  const acompanhadas = visita.cargas.filter((c) => c.acompanhada)
+  const naoAcompanhadas = visita.cargas.filter((c) => !c.acompanhada)
+
+  naoAcompanhadas.forEach((nc) => {
+    // 5.1 — mesma carga inserida também como acompanhada (mesmo romaneio)
+    const duplicadaAcompanhada = acompanhadas.find(
+      (c) => c.romaneio && c.romaneio === nc.romaneio && c.placa === nc.placa,
+    )
+    if (duplicadaAcompanhada) {
+      add({
+        id: `${nc.id}-dup-acompanhada`,
+        codigo: '5.1',
+        severidade: 'erro',
+        regra: 'Carga lançada como acompanhada e não acompanhada (5.1)',
+        detalhe: `Romaneio ${nc.romaneio} (placa ${nc.placa}) aparece tanto em Não Acompanhadas (${nc.id}) quanto em Acompanhadas (${duplicadaAcompanhada.id}).`,
+        aba: abaCarga,
+        cargaId: nc.id,
+      })
+    } else if (nc.romaneio && acompanhadas.some((c) => c.romaneio === nc.romaneio)) {
+      // 5.3 — romaneio duplicado com as cargas acompanhadas (placas diferentes)
+      add({
+        id: `${nc.id}-romaneio-cruzado`,
+        codigo: '5.3',
+        severidade: 'erro',
+        regra: 'Romaneio duplicado com carga acompanhada (5.3)',
+        detalhe: `O romaneio ${nc.romaneio} da carga não acompanhada ${nc.id} já é usado por uma carga acompanhada.`,
+        aba: abaCarga,
+        cargaId: nc.id,
+      })
+    }
+  })
+
+  /* ================================================================ *
+   * 4. Rateio
+   * ================================================================ */
   gruposDeRateio(visita.cargas).forEach((g) => {
     const placas = new Set(g.cargas.map((c) => c.placa))
     if (placas.size > 1) {
       add({
         id: `${g.id}-placas`,
+        codigo: '4.9',
         severidade: 'erro',
         regra: 'Rateio com placas divergentes',
         detalhe: `O grupo ${g.id} tem ${placas.size} placas diferentes (${[...placas].join(', ')}); um rateio é sempre o mesmo caminhão.`,
@@ -171,6 +451,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
     if (classes.size > 1) {
       add({
         id: `${g.id}-classificacoes`,
+        codigo: '4.10',
         severidade: 'erro',
         regra: 'Rateio com classificações divergentes',
         detalhe: `O grupo ${g.id} mistura ${[...classes].join(', ')}.`,
@@ -182,6 +463,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
     if (g.cargas.length < 2) {
       add({
         id: `${g.id}-unico`,
+        codigo: '4.11',
         severidade: 'atencao',
         regra: 'Rateio com uma única carga',
         detalhe: `O grupo ${g.id} ficou com apenas uma carga.`,
@@ -189,55 +471,215 @@ export function analisarVisita(visita: Visita): Alerta[] {
         cargaId: g.cargas[0].id,
       })
     }
+
+    if (!g.cargas.every((c) => c.grupoRateio)) {
+      // 4.1 — marcado como rateio mas sem grupo/parceiro associado
+      add({
+        id: `${g.id}-sem-parceiro`,
+        codigo: '4.1',
+        severidade: 'erro',
+        regra: 'Rateio sem parceiro informado (4.1)',
+        detalhe: `O grupo ${g.id} tem carga marcada como rateio sem grupo associado.`,
+        aba: 'divergencias',
+        cargaId: g.cargas[0].id,
+      })
+    }
+
+    const pesoLiquidoGrupo = g.cargas.reduce((s, c) => s + c.pesoLiquido, 0)
+    const pesoDescontoGrupo = g.cargas.reduce((s, c) => s + c.pesoComDesconto, 0)
+
+    if (pesoDescontoGrupo > pesoLiquidoGrupo) {
+      // 4.2
+      add({
+        id: `${g.id}-peso-invertido`,
+        codigo: '4.2',
+        severidade: 'erro',
+        regra: 'Peso com desconto do grupo maior que o líquido (4.2)',
+        detalhe: `O grupo ${g.id} soma ${kg(pesoDescontoGrupo)} com desconto contra ${kg(pesoLiquidoGrupo)} líquido.`,
+        aba: 'divergencias',
+        cargaId: g.cargas[0].id,
+      })
+    } else if (pesoLiquidoGrupo > 0) {
+      const descontoGrupo = ((pesoLiquidoGrupo - pesoDescontoGrupo) / pesoLiquidoGrupo) * 100
+      if (descontoGrupo > LIMITE_DESCONTO_ERRO) {
+        // 4.3
+        add({
+          id: `${g.id}-desconto-grupo`,
+          codigo: '4.3',
+          severidade: 'erro',
+          regra: `Desconto do grupo acima de ${LIMITE_DESCONTO_ERRO}% (4.3)`,
+          detalhe: `O grupo ${g.id} tem desconto médio de ${pct(descontoGrupo)}.`,
+          aba: 'divergencias',
+          cargaId: g.cargas[0].id,
+          valor: pct(descontoGrupo),
+        })
+      }
+    }
+
+    if (pesoLiquidoGrupo > 70000) {
+      // 4.4
+      add({
+        id: `${g.id}-peso-total`,
+        codigo: '4.4',
+        severidade: 'atencao',
+        regra: 'Peso total do grupo acima de 70.000 kg (4.4)',
+        detalhe: `O grupo ${g.id} soma ${kg(pesoLiquidoGrupo)} de peso líquido.`,
+        aba: 'divergencias',
+        cargaId: g.cargas[0].id,
+      })
+    }
+
+    if (g.cargas.some((c) => c.pesoLiquido <= 0)) {
+      // 4.5
+      add({
+        id: `${g.id}-sem-peso`,
+        codigo: '4.5',
+        severidade: 'erro',
+        regra: 'Grupo de rateio com carga sem peso líquido (4.5)',
+        detalhe: `Ao menos uma carga do grupo ${g.id} está sem peso líquido informado.`,
+        aba: 'divergencias',
+        cargaId: g.cargas[0].id,
+      })
+    }
+
+    if (g.cargas.some((c) => c.classificacao === 'Participante')) {
+      // 4.7
+      add({
+        id: `${g.id}-tecnologia-participante`,
+        codigo: '4.7',
+        severidade: 'atencao',
+        regra: 'Rateio com tecnologia do participante (4.7)',
+        detalhe: `O grupo ${g.id} tem carga classificada como Participante — confirme a tecnologia antes de certificar.`,
+        aba: 'divergencias',
+        cargaId: g.cargas[0].id,
+      })
+    }
   })
 
-  /* ---------------------------------------------- bloco 2 — coerência */
+  // 4.6 — mesma placa em menos de 10 minutos fora de um grupo de rateio já identificado
+  const porPlaca = new Map<string, Carga[]>()
+  visita.cargas.forEach((c) => {
+    if (c.rateio) return
+    const lista = porPlaca.get(c.placa) ?? []
+    lista.push(c)
+    porPlaca.set(c.placa, lista)
+  })
+  porPlaca.forEach((cargas) => {
+    if (cargas.length < 2) return
+    for (let i = 0; i < cargas.length; i++) {
+      for (let j = i + 1; j < cargas.length; j++) {
+        if (cargas[i].data !== cargas[j].data) continue
+        if (diferencaMinutos(cargas[i].hora, cargas[j].hora) >= 10) continue
+        add({
+          id: `${cargas[i].id}-${cargas[j].id}-possivel-rateio`,
+          codigo: '4.6',
+          severidade: 'atencao',
+          regra: 'Mesma placa em menos de 10 minutos — possível rateio (4.6)',
+          detalhe: `Cargas ${cargas[i].id} e ${cargas[j].id} (placa ${cargas[i].placa}) foram lançadas com ${diferencaMinutos(cargas[i].hora, cargas[j].hora)} min de diferença, sem estarem marcadas como rateio.`,
+          aba: abaCarga,
+          cargaId: cargas[i].id,
+        })
+        return
+      }
+    }
+  })
+
+  /* ================================================================ *
+   * 1. Formulário (bloco 2 — Dados da Visita)
+   * ================================================================ */
   const d = visita.dadosVisita
   const temCargas = visita.cargas.length > 0
 
+  // 1.1 — visita deve estar marcada como iniciada
+  if (d.visitaIniciada !== 'Sim') {
+    add({
+      id: 'r1-1-visita-nao-iniciada',
+      codigo: '1.1',
+      severidade: 'erro',
+      regra: 'Visita não marcada como iniciada (1.1)',
+      detalhe: 'A pergunta 2.1 (Visita foi iniciada?) não está em "Sim".',
+      aba: 'visita',
+      responsavel: 'analista',
+    })
+  }
+
+  // 1.2 — coerência entre "Houve Recebimento" e a existência de cargas
   if (d.recebimentoCargas === 'Não' && temCargas) {
     add({
       id: 'b2-recebimento',
+      codigo: '1.2',
       severidade: 'erro',
-      regra: 'Recebimento de cargas incoerente',
+      regra: 'Recebimento de cargas incoerente (1.2)',
       detalhe: `A pergunta 2.2 está "Não", mas a visita tem ${visita.cargas.length} cargas lançadas.`,
       aba: 'visita',
+      responsavel: 'analista',
     })
   }
-
   if (d.recebimentoCargas === 'Sim' && !temCargas) {
     add({
       id: 'b2-sem-cargas',
+      codigo: '1.2',
       severidade: 'erro',
-      regra: 'Recebimento sem cargas lançadas',
+      regra: 'Recebimento sem cargas lançadas (1.2)',
       detalhe: 'A pergunta 2.2 está "Sim", mas nenhuma carga foi registrada.',
       aba: 'visita',
+      responsavel: 'analista',
     })
   }
 
+  // 1.3 — "Realiza testes" deve ser coerente com o resultado (caixa de fita) informado
+  if (d.realizouTestes === 'Sim' && d.caixaFitaTeste === 0) {
+    add({
+      id: 'b2-caixa-zero',
+      codigo: '1.3',
+      severidade: 'atencao',
+      regra: 'Testes realizados sem resultado informado (1.3)',
+      detalhe: 'Foram realizados testes (2.3) mas a caixa de fita teste (2.6) está zerada.',
+      aba: 'visita',
+      responsavel: 'analista',
+    })
+  }
+
+  // 1.4 — PDR guarda as fitas testadas de forma associável às cargas?
+  if (d.fitasAssociaveisCargas === 'Não') {
+    add({
+      id: 'r1-4-fitas-nao-associaveis',
+      codigo: '1.4',
+      severidade: 'atencao',
+      regra: 'Fitas testadas não associáveis às cargas (1.4)',
+      detalhe: 'O PDR não guarda as fitas testadas de forma que seja possível associá-las às cargas.',
+      aba: 'visita',
+      responsavel: 'operacao',
+    })
+  }
+
+  // 1.5 — reteste realizado precisa de solicitante e motivo
   if (d.houveReteste === 'Sim' && (!d.retesteSolicitante.trim() || !d.retesteMotivo.trim())) {
     add({
       id: 'b2-reteste',
+      codigo: '1.5',
       severidade: 'erro',
-      regra: 'Reteste sem justificativa',
+      regra: 'Reteste sem justificativa (1.5)',
       detalhe: 'A pergunta 2.4 está "Sim" mas falta informar quem pediu o reteste e/ou o motivo.',
       aba: 'visita',
+      responsavel: 'operacao',
     })
   }
 
   if (d.houveOcorrencia === 'Sim' && visita.ocorrencias.length === 0) {
     add({
       id: 'b2-ocorrencia-sem-registro',
+      codigo: '6.1',
       severidade: 'atencao',
       regra: 'Ocorrência sem registro',
       detalhe: 'A pergunta 2.5 está "Sim" mas não há ocorrência cadastrada na aba 6.',
       aba: 'ocorrencias',
     })
   }
-
   if (d.houveOcorrencia === 'Não' && visita.ocorrencias.length > 0) {
     add({
       id: 'b2-ocorrencia-nao',
+      codigo: '6.2',
       severidade: 'erro',
       regra: 'Ocorrência não declarada',
       detalhe: `A pergunta 2.5 está "Não" mas existem ${visita.ocorrencias.length} ocorrências registradas.`,
@@ -245,38 +687,61 @@ export function analisarVisita(visita: Visita): Alerta[] {
     })
   }
 
+  // 1.6 — quantidade de caixas dentro da faixa (0 = não preenchido, isento)
   if (
-    d.caixaFitaTeste < CAIXA_FITA_MIN ||
-    d.caixaFitaTeste > CAIXA_FITA_MAX ||
-    !Number.isInteger(d.caixaFitaTeste)
+    d.caixaFitaTeste !== 0 &&
+    (d.caixaFitaTeste < CAIXA_FITA_MIN ||
+      d.caixaFitaTeste > CAIXA_FITA_MAX ||
+      !Number.isInteger(d.caixaFitaTeste))
   ) {
     add({
       id: 'b2-caixa',
+      codigo: '1.6',
       severidade: 'erro',
-      regra: 'Caixa de fita fora da faixa',
+      regra: 'Caixa de fita fora da faixa (1.6)',
       detalhe: `O número da caixa de fita teste deve ficar entre ${CAIXA_FITA_MIN} e ${CAIXA_FITA_MAX}.`,
       aba: 'visita',
       valor: String(d.caixaFitaTeste),
+      responsavel: 'operacao',
     })
   }
 
-  if (d.realizouTestes === 'Sim' && d.caixaFitaTeste === 0) {
-    add({
-      id: 'b2-caixa-zero',
-      severidade: 'atencao',
-      regra: 'Caixa de fita não informada',
-      detalhe: 'Foram realizados testes (2.3) mas a caixa de fita teste (2.6) está zerada.',
-      aba: 'visita',
-    })
-  }
-
-  /* ------------------------------------------------ bloco 3 — acumulado */
+  /* ================================================================ *
+   * 2. Acumulado (bloco 3 — Histórico de Acumulado)
+   * ================================================================ */
   const a = visita.acumulado
   const totalAcumulado = CLASSIFICACOES.reduce((s, c) => s + a.valores[c], 0)
+
+  // 2.1 — houve recebimento mas não há dados de acumulado
+  if (d.recebimentoCargas === 'Sim' && totalAcumulado === 0) {
+    add({
+      id: 'r2-1-recebimento-sem-acumulado',
+      codigo: '2.1',
+      severidade: 'erro',
+      regra: 'Recebimento sem dados de acumulado (2.1)',
+      detalhe: 'A visita teve recebimento de cargas (2.2), mas o acumulado (bloco 3) está zerado.',
+      aba: 'acumulado',
+      responsavel: 'analista',
+    })
+  }
+
+  // 2.2 — não houve recebimento mas há dados de acumulado
+  if (d.recebimentoCargas === 'Não' && totalAcumulado > 0) {
+    add({
+      id: 'r2-2-sem-recebimento-com-acumulado',
+      codigo: '2.2',
+      severidade: 'erro',
+      regra: 'Acumulado informado sem recebimento (2.2)',
+      detalhe: 'A pergunta 2.2 está "Não", mas o acumulado (bloco 3) tem valores lançados.',
+      aba: 'acumulado',
+      responsavel: 'analista',
+    })
+  }
 
   if (a.origem === 'PDR' && a.informadoPeloPdr === 'Sim' && totalAcumulado === 0) {
     add({
       id: 'b3-zerado',
+      codigo: '2.7',
       severidade: 'erro',
       regra: 'Acumulado informado e zerado',
       detalhe: 'O PDR informou o acumulado (3.1) mas todos os valores estão em zero.',
@@ -287,6 +752,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
   if (CLASSIFICACOES.some((c) => a.valores[c] < 0)) {
     add({
       id: 'b3-negativo',
+      codigo: '2.8',
       severidade: 'erro',
       regra: 'Acumulado com valor negativo',
       detalhe: 'Há classificação com tonelagem negativa no acumulado.',
@@ -294,10 +760,59 @@ export function analisarVisita(visita: Visita): Alerta[] {
     })
   }
 
-  // o acumulado é cumulativo: um período nunca pode valer menos que o anterior
+  // 2.3 — acumulado inferior a 100 kg (informado, mas irrisório)
+  if (totalAcumulado > 0 && totalAcumulado < 100) {
+    add({
+      id: 'r2-3-acumulado-baixo',
+      codigo: '2.3',
+      severidade: 'atencao',
+      regra: 'Acumulado inferior a 100 kg (2.3)',
+      detalhe: `O acumulado total informado é de apenas ${kg(totalAcumulado)}.`,
+      aba: 'acumulado',
+      responsavel: 'operacao',
+    })
+  }
+
   const historico = historicoAcumuladoPorCnpj(visita.pdr.cnpj)
-  const totalPeriodo = (p: AcumuladoPeriodo) =>
-    p.negativa + p.declarada + p.positiva + p.participante
+  const ultimoDia = historico.dias[0]
+
+  // 2.4 — crescimento diário de uma classificação acima de 2.000.000 kg
+  if (ultimoDia) {
+    CLASSIFICACOES.forEach((c) => {
+      const anterior = ultimoDia[CAMPO_PERIODO[c]] * 1000 // histórico está em toneladas
+      const crescimento = a.valores[c] - anterior
+      if (crescimento > 2_000_000) {
+        add({
+          id: `r2-4-crescimento-${c}`,
+          codigo: '2.4',
+          severidade: 'erro',
+          regra: 'Crescimento diário acima de 2.000.000 kg (2.4)',
+          detalhe: `${c}: cresceu ${kg(crescimento)} em relação ao último dia (${ultimoDia.periodo}).`,
+          aba: 'acumulado',
+          valor: kg(crescimento),
+          responsavel: 'operacao',
+        })
+      }
+    })
+
+    // 2.6 — acumulado duplicado (mesmo total do último dia registrado)
+    const totalUltimoDia =
+      (ultimoDia.negativa + ultimoDia.declarada + ultimoDia.positiva + ultimoDia.participante) * 1000
+    if (totalAcumulado > 0 && totalAcumulado === totalUltimoDia) {
+      add({
+        id: 'r2-6-acumulado-duplicado',
+        codigo: '2.6',
+        severidade: 'atencao',
+        regra: 'Acumulado duplicado (2.6)',
+        detalhe: `O total informado é idêntico ao do último período (${ultimoDia.periodo}) — confira se não foi copiado.`,
+        aba: 'acumulado',
+        responsavel: 'analista',
+      })
+    }
+  }
+
+  // o acumulado é cumulativo: um período nunca pode valer menos que o anterior (2.5)
+  const totalPeriodo = (p: AcumuladoPeriodo) => p.negativa + p.declarada + p.positiva + p.participante
 
   const conferirSerie = (lista: AcumuladoPeriodo[], rotulo: string) => {
     const crono = [...lista].reverse() // do mais antigo para o mais novo
@@ -309,11 +824,13 @@ export function analisarVisita(visita: Visita): Alerta[] {
       encontrados++
       add({
         id: `b3-retrocesso-${rotulo}-${crono[i].periodo}`,
+        codigo: '2.5',
         severidade: 'erro',
-        regra: 'Acumulado menor que o do período anterior',
+        regra: 'Acumulado menor que o do período anterior (2.5)',
         detalhe: `${rotulo} ${crono[i].periodo} soma ${atual.toLocaleString('pt-BR')} t, abaixo dos ${anterior.toLocaleString('pt-BR')} t de ${crono[i - 1].periodo}. Acumulado não pode diminuir.`,
         aba: 'acumulado',
         valor: `−${(anterior - atual).toLocaleString('pt-BR')} t`,
+        responsavel: 'operacao',
       })
     }
   }
@@ -326,6 +843,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
     if (o.cargaId && !visita.cargas.some((c) => c.id === o.cargaId)) {
       add({
         id: `${o.id}-carga-inexistente`,
+        codigo: '6.3',
         severidade: 'erro',
         regra: 'Ocorrência apontando carga inexistente',
         detalhe: `A ocorrência ${o.id} referencia a carga ${o.cargaId}, que não está mais na visita.`,

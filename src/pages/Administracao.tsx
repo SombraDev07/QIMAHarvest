@@ -18,7 +18,8 @@ const MODULOS = [
   {
     Icone: IconEngrenagem,
     titulo: 'Parâmetros',
-    desc: 'Limite de desconto, regras de rateio e origem do acumulado',
+    desc: 'Regras de análise da visita e mensagem padrão do chat',
+    to: '/administracao/parametros',
   },
 ]
 
