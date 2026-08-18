@@ -873,10 +873,9 @@ export function analisarVisita(visita: Visita): Alerta[] {
   }
 
   /**
-   * A série termina no dia da visita, então dias[0] é o próprio dia auditado e
-   * dias[1] é a véspera. O acumulado informado na visita vale para o dia dela,
-   * e por isso é comparado com a véspera — comparar com dias[0] seria comparar
-   * o número com ele mesmo.
+   * A série só tem dias com visita (ou import de acumulado). dias[0] é o próprio
+   * dia auditado quando existe; dias[1] é o ponto anterior da unidade — não o
+   * dia de calendário, porque não há visita todos os dias.
    */
   const historico = historicoAcumuladoUnidade(visita.pdr.cnpj, dataParaDate(visita.data))
   const vespera = historico.dias[1]

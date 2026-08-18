@@ -92,6 +92,8 @@ export const EN: Record<string, string> = {
   'safra 2025/2026': '2025/2026 season',
   'central + operação': 'central + field',
   'somatório dos romaneios': 'sum of the delivery notes',
+  'Voltar para a Central': 'Back to Central',
+  'Voltar para a Operação': 'Back to Operations',
   'A visita percorre as filas na ordem abaixo até ser cancelada ou certificada · clique em um card para abrir a lista':
     'The visit moves through the queues below until cancelled or certified · click a card to open the list',
 

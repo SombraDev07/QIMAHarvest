@@ -15,7 +15,7 @@ import {
   removerUsuario,
 } from './store'
 import { USUARIOS_INICIAIS } from './data/mock'
-import { PERFIS, podeEditarVisita, type Perfil, type Usuario } from './types'
+import { PERFIS, podeEditarVisita, podeReabrirVisita, type Perfil, type Usuario } from './types'
 import {
   coordenadaValida,
   cpfValido,
@@ -43,6 +43,13 @@ describe('perfis de acesso', () => {
     expect([...editam].sort()).toEqual(
       ['Admin', 'Information Analyst', 'Operational Leader', 'Strategic Leader'].sort(),
     )
+  })
+
+  it('só Admin e Information Analyst reabrem visita certificada', () => {
+    expect(podeReabrirVisita('Admin')).toBe(true)
+    expect(podeReabrirVisita('Information Analyst')).toBe(true)
+    expect(podeReabrirVisita('Operational Leader')).toBe(false)
+    expect(podeReabrirVisita('Auditor')).toBe(false)
   })
 
   it('os demais perfis abrem a visita em leitura', () => {

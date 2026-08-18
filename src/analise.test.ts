@@ -451,6 +451,6 @@ describe('1.2 / 2.1 — recebimento só conta carga acompanhada', () => {
 describe('base completa', () => {
   it('mantém o total de alertas da safra', () => {
     const total = VISITAS_INICIAIS.reduce((s, v) => s + analisarVisita(v).length, 0)
-    expect(total).toBe(5024)
+    expect(total).toBe(4862)
   })
 })

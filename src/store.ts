@@ -5,7 +5,6 @@ import {
   SOLICITACOES_INICIAIS,
   USUARIOS_INICIAIS,
   reservarIdCarga,
-  historicoAcumuladoPorCnpj as historicoMock,
 } from './data/mock'
 import { regrasAtivasPadrao } from './regras'
 import {
@@ -1396,9 +1395,9 @@ export function visitasPorCnpj(cnpj: string): Visita[] {
 const NOMES_MES_HIST = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
 /**
- * Histórico real da unidade: cada visita no banco vira um ponto. A regra 2.5
- * (acumulado menor) compara estes pontos — import de acumulado entra aqui.
- * Sem visitas daquele CNPJ, cai no gerador de demonstração.
+ * Histórico real da unidade: cada visita no banco vira um ponto. Sem visita
+ * naquele dia, o dia não entra — não se preenche calendário. Import de
+ * acumulado entra aqui (visita INSERÇÃO_AUTO). A regra 2.5 compara estes pontos.
  */
 export function historicoAcumuladoUnidade(cnpj: string, ate: Date): HistoricoAcumulado {
   const limite = ate.getFullYear() * 10000 + (ate.getMonth() + 1) * 100 + ate.getDate()
@@ -1424,7 +1423,6 @@ export function historicoAcumuladoUnidade(cnpj: string, ate: Date): HistoricoAcu
   const dias = [...porDia.entries()]
     .sort((a, b) => b[0] - a[0])
     .map(([, p]) => p)
-  if (dias.length < 2) return historicoMock(cnpj, ate)
 
   const mesesMap = new Map<string, AcumuladoPeriodo>()
   for (const d of [...dias].reverse()) {

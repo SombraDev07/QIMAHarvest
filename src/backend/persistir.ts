@@ -232,6 +232,28 @@ function erro(acao: string, e: { message?: string } | null): Error {
   return new Error(`${acao}: ${e?.message ?? 'falha desconhecida'}`)
 }
 
+/** PostgREST corta em 1000 linhas por request — pagina até trazer o resto */
+const TAMANHO_PAGINA = 1000
+
+async function todasAsLinhas(
+  sb: NonNullable<ReturnType<typeof supabase>>,
+  tabela: string,
+): Promise<LinhaVisita[]> {
+  const linhas: LinhaVisita[] = []
+  let de = 0
+  for (;;) {
+    const { data, error: e } = await sb
+      .from(tabela)
+      .select('*')
+      .range(de, de + TAMANHO_PAGINA - 1)
+    if (e) throw erro(`carregar ${tabela}`, e)
+    linhas.push(...((data ?? []) as LinhaVisita[]))
+    if (!data || data.length < TAMANHO_PAGINA) break
+    de += TAMANHO_PAGINA
+  }
+  return linhas
+}
+
 export async function persistirVisita(v: Visita): Promise<void> {
   const sb = supabase()
   if (!sb) return
@@ -422,32 +444,31 @@ export async function carregarTudo(): Promise<{
   if (!sb) return { visitas: [], pdrs: [], parametros: null, usuarios: [] }
 
   const [vis, cargas, dias, msgs, logs, erros, ocor, pdrsRes, parRes, usuRes] = await Promise.all([
-    sb.from('visitas').select('*'),
-    sb.from('cargas').select('*'),
-    sb.from('dias_anteriores').select('*'),
-    sb.from('mensagens_visita').select('*'),
-    sb.from('log_alteracoes').select('*'),
-    sb.from('erros_liberados').select('*'),
-    sb.from('ocorrencias').select('*'),
-    sb.from('pdrs').select('*'),
+    todasAsLinhas(sb, 'visitas'),
+    todasAsLinhas(sb, 'cargas'),
+    todasAsLinhas(sb, 'dias_anteriores'),
+    todasAsLinhas(sb, 'mensagens_visita'),
+    todasAsLinhas(sb, 'log_alteracoes'),
+    todasAsLinhas(sb, 'erros_liberados'),
+    todasAsLinhas(sb, 'ocorrencias'),
+    todasAsLinhas(sb, 'pdrs'),
     sb.from('parametros').select('*').eq('id', 1).maybeSingle(),
-    sb.from('usuarios').select('*'),
+    todasAsLinhas(sb, 'usuarios'),
   ])
 
-  const falha = [vis, cargas, dias, msgs, logs, erros, ocor, pdrsRes, parRes, usuRes].find((r) => r.error)
-  if (falha?.error) throw erro('carregar', falha.error)
+  if (parRes.error) throw erro('carregar', parRes.error)
 
   const cargasPor = new Map<number, Carga[]>()
-  for (const c of cargas.data ?? []) {
-    const lista = cargasPor.get(c.visita_cod) ?? []
-    lista.push(cargaDeLinha(c))
-    cargasPor.set(c.visita_cod, lista)
+  for (const c of cargas) {
+    const lista = cargasPor.get(Number(c.visita_cod)) ?? []
+    lista.push(cargaDeLinha(c as LinhaCarga))
+    cargasPor.set(Number(c.visita_cod), lista)
   }
   const diasPor = new Map<number, DiaAnterior[]>()
-  for (const d of dias.data ?? []) {
-    const lista = diasPor.get(d.visita_cod) ?? []
+  for (const d of dias) {
+    const lista = diasPor.get(Number(d.visita_cod)) ?? []
     lista.push({
-      id: d.id,
+      id: String(d.id),
       data: dataIsoParaBr(String(d.data)),
       informouDiaAnterior: d.informou === 'Sim' ? 'Sim' : 'Não',
       valores: {
@@ -457,65 +478,65 @@ export async function carregarTudo(): Promise<{
         Participante: Number(d.participante),
       },
     })
-    diasPor.set(d.visita_cod, lista)
+    diasPor.set(Number(d.visita_cod), lista)
   }
   const msgsPor = new Map<number, Mensagem[]>()
-  for (const m of msgs.data ?? []) {
-    const lista = msgsPor.get(m.visita_cod) ?? []
+  for (const m of msgs) {
+    const lista = msgsPor.get(Number(m.visita_cod)) ?? []
     lista.push({
-      id: m.id,
-      autor: m.autor,
-      papel: m.papel,
-      texto: m.texto,
-      ts: new Date(m.ts).getTime(),
+      id: String(m.id),
+      autor: String(m.autor ?? ''),
+      papel: String(m.papel ?? ''),
+      texto: String(m.texto ?? ''),
+      ts: new Date(String(m.ts)).getTime(),
       tipo: m.tipo === 'sistema' ? 'sistema' : 'mensagem',
-      responsavel: m.responsavel ?? undefined,
+      responsavel: (m.responsavel as string | null) ?? undefined,
     })
-    msgsPor.set(m.visita_cod, lista)
+    msgsPor.set(Number(m.visita_cod), lista)
   }
   const logsPor = new Map<number, LogAlteracao[]>()
-  for (const l of logs.data ?? []) {
-    const lista = logsPor.get(l.visita_cod) ?? []
+  for (const l of logs) {
+    const lista = logsPor.get(Number(l.visita_cod)) ?? []
     lista.push({
-      id: l.id,
-      ts: new Date(l.ts).getTime(),
-      por: l.por,
+      id: String(l.id),
+      ts: new Date(String(l.ts)).getTime(),
+      por: String(l.por ?? ''),
       origem: l.origem === 'import-correcao' ? 'import-correcao' : 'edicao',
-      planilha: l.planilha,
-      tipo: l.tipo,
-      chave: l.chave,
-      resumo: l.resumo,
+      planilha: String(l.planilha ?? ''),
+      tipo: (l.tipo as LogAlteracao['tipo']) ?? 'carga',
+      chave: String(l.chave ?? ''),
+      resumo: String(l.resumo ?? ''),
     })
-    logsPor.set(l.visita_cod, lista)
+    logsPor.set(Number(l.visita_cod), lista)
   }
   const errosPor = new Map<number, ErroLiberado[]>()
-  for (const e of erros.data ?? []) {
-    const lista = errosPor.get(e.visita_cod) ?? []
+  for (const e of erros) {
+    const lista = errosPor.get(Number(e.visita_cod)) ?? []
     lista.push({
-      alertaId: e.alerta_id,
-      regra: e.regra,
-      justificativa: e.justificativa,
-      por: e.por,
-      ts: new Date(e.ts).getTime(),
+      alertaId: String(e.alerta_id),
+      regra: String(e.regra ?? ''),
+      justificativa: String(e.justificativa ?? ''),
+      por: String(e.por ?? ''),
+      ts: new Date(String(e.ts)).getTime(),
     })
-    errosPor.set(e.visita_cod, lista)
+    errosPor.set(Number(e.visita_cod), lista)
   }
   const ocorPor = new Map<number, Ocorrencia[]>()
-  for (const o of ocor.data ?? []) {
-    const lista = ocorPor.get(o.visita_cod) ?? []
+  for (const o of ocor) {
+    const lista = ocorPor.get(Number(o.visita_cod)) ?? []
     lista.push({
-      id: o.id,
-      tipo: o.tipo,
-      gravidade: o.gravidade,
-      descricao: o.descricao,
+      id: String(o.id),
+      tipo: String(o.tipo ?? ''),
+      gravidade: (o.gravidade as Ocorrencia['gravidade']) ?? 'Média',
+      descricao: String(o.descricao ?? ''),
       data: o.data ? dataIsoParaBr(String(o.data)) : '',
-      status: o.status,
-      cargaId: o.carga_id ?? undefined,
+      status: (o.status as Ocorrencia['status']) ?? 'Aberta',
+      cargaId: (o.carga_id as string | null) ?? undefined,
     })
-    ocorPor.set(o.visita_cod, lista)
+    ocorPor.set(Number(o.visita_cod), lista)
   }
 
-  const visitas = (vis.data ?? []).map((row) => {
+  const visitas = vis.map((row) => {
     const cod = Number(row.cod)
     return montarVisita(row, {
       cargas: cargasPor.get(cod) ?? [],
@@ -529,18 +550,18 @@ export async function carregarTudo(): Promise<{
     })
   })
 
-  const pdrs: PdrCatalogo[] = (pdrsRes.data ?? []).map((p) => ({
-    id: p.id,
-    nome: p.nome,
-    cnpj: p.cnpj,
-    cidade: p.cidade,
-    uf: p.uf,
+  const pdrs: PdrCatalogo[] = pdrsRes.map((p) => ({
+    id: String(p.id),
+    nome: String(p.nome ?? ''),
+    cnpj: String(p.cnpj ?? ''),
+    cidade: String(p.cidade ?? ''),
+    uf: String(p.uf ?? ''),
     situacao: p.situacao === 'Inativo' ? 'Inativo' : 'Ativo',
-    latitude: p.latitude ?? undefined,
-    longitude: p.longitude ?? undefined,
-    telefone: p.telefone ?? undefined,
-    email: p.email ?? undefined,
-    observacao: p.observacao ?? undefined,
+    latitude: p.latitude == null ? undefined : String(p.latitude),
+    longitude: p.longitude == null ? undefined : String(p.longitude),
+    telefone: (p.telefone as string | null) ?? undefined,
+    email: (p.email as string | null) ?? undefined,
+    observacao: (p.observacao as string | null) ?? undefined,
   }))
 
   const pr = parRes.data
@@ -558,7 +579,7 @@ export async function carregarTudo(): Promise<{
       }
     : null
 
-  const usuarios: Usuario[] = (usuRes.data ?? []).map((u) => ({
+  const usuarios: Usuario[] = usuRes.map((u) => ({
     id: String(u.id),
     nome: String(u.nome ?? ''),
     login: String(u.login ?? ''),

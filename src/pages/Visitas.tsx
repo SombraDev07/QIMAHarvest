@@ -4,6 +4,7 @@ import { Breadcrumb, PageHead } from '../components/ui'
 import FluxoVisitas from '../components/FluxoVisitas'
 import BuscaVisita from '../components/BuscaVisita'
 import { fmtKg, fmtNum, fmtPct } from '../format'
+import { pesoVolumeLiquido } from '../types'
 
 export default function Visitas() {
   const visitas = useVisitas()
@@ -15,9 +16,9 @@ export default function Visitas() {
     contarPorSituacao(visitas, 'operacao-correcao')
   const certificadas = contarPorSituacao(visitas, 'certificada')
 
-  const cargas = visitas.flatMap((v) => v.cargas)
-  const pesoLiquido = cargas.reduce((s, c) => s + c.pesoLiquido, 0)
-  const rateadas = cargas.filter((c) => c.rateio).length
+  const acompanhadas = visitas.flatMap((v) => v.cargas.filter((c) => c.acompanhada))
+  const pesoLiquido = acompanhadas.reduce((s, c) => s + pesoVolumeLiquido(c), 0)
+  const rateadas = acompanhadas.filter((c) => c.rateio).length
 
   return (
     <main className="page">
@@ -51,7 +52,7 @@ export default function Visitas() {
         </div>
         <div className="kpi">
           <div className="kpi__label">{t('Cargas acompanhadas')}</div>
-          <div className="kpi__value">{fmtNum(cargas.length)}</div>
+          <div className="kpi__value">{fmtNum(acompanhadas.length)}</div>
           <div className="kpi__sub">{fmtNum(rateadas)} em rateio</div>
         </div>
         <div className="kpi">

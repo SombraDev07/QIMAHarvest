@@ -94,6 +94,16 @@ export const campoNaoInformado = (
   campo: CampoCargaNaoInformado,
 ): boolean => Boolean(c.naoInformado?.[campo])
 
+/**
+ * Volume líquido: usa o peso com desconto quando ele existe. Zero, vazio ou
+ * "não informado" cai no peso do romaneio (sem desconto).
+ */
+export function pesoVolumeLiquido(c: Carga): number {
+  if (!campoNaoInformado(c, 'pesoComDesconto') && c.pesoComDesconto > 0) return c.pesoComDesconto
+  if (campoNaoInformado(c, 'pesoLiquido')) return 0
+  return c.pesoLiquido > 0 ? c.pesoLiquido : 0
+}
+
 /** Bloco 2 — Dados da Visita */
 export interface DadosVisita {
   /** 2.1 — travado em "Sim" quando existem cargas lançadas */
@@ -338,6 +348,10 @@ export const PERFIS_EDITAM_VISITA: readonly Perfil[] = [
 
 export const podeEditarVisita = (perfil: Perfil): boolean =>
   PERFIS_EDITAM_VISITA.includes(perfil)
+
+/** Admin e Information Analyst reabrem visita certificada para correção */
+export const podeReabrirVisita = (perfil: Perfil): boolean =>
+  perfil === 'Admin' || perfil === 'Information Analyst'
 
 export interface Usuario {
   id: string

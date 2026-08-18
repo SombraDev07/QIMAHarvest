@@ -54,12 +54,9 @@ import TabelaCargas from '../components/TabelaCargas'
 import TabelaDivergencias from '../components/TabelaDivergencias'
 import AbaComunicacao from '../components/AbaComunicacao'
 import ChatFlutuante from '../components/ChatFlutuante'
-import { fmtDataHora, fmtKg, fmtNum, fmtPct, fmtTon, numeroDigitado, vespera } from '../format'
+import { fmtDataHora, fmtKg, fmtNum, fmtPct, fmtTon, numeroDigitado, dataComparavel } from '../format'
 
 type AbaId = AbaVisita
-
-/** janela de dias anteriores mostrada na aba Dia Anterior */
-const DIAS_ANTERIORES = 14
 
 /** "dd/mm/aaaa" → Date local, sem passar por Date.parse (que lê como UTC) */
 function dataParaDate(data: string): Date {
@@ -1083,10 +1080,9 @@ function AbaAcumulado({
 }
 
 /**
- * Dia Anterior — uma linha por dia do histórico da unidade, no mesmo desenho
- * da tabela 3.2. A tabela já vem completa: cada dia começa como PDR / não
- * informado / 0-0-0-0, e marcar "Sim" libera as tecnologias daquele dia. Só o
- * que o auditor mexe é gravado; o resto continua vindo do histórico.
+ * Dia Anterior — uma linha por dia que de fato existe: visitas da unidade
+ * (incluindo as criadas no importador de acumulado) e os lançamentos já
+ * gravados nesta visita. Não se inventa dia de calendário no meio.
  */
 function AbaDiaAnterior({
   visita,
@@ -1100,22 +1096,17 @@ function AbaDiaAnterior({
   const { limiteDiaAnteriorTecnologia: teto } = useParametros()
   const visitas = useVisitas()
 
-  /**
-   * Os dias anteriores à visita — e não os anteriores a hoje. Para uma visita
-   * de março, listar os últimos dias do sistema mostraria datas posteriores a
-   * ela, que é o oposto de "dia anterior".
-   */
   const dias = useMemo(() => {
-    // o dia da visita entra como primeira linha, para o auditor ver o que está
-    // lançando hoje ao lado do que veio antes
-    const lista: string[] = [visita.data]
-    let dia = visita.data
-    for (let i = 0; i < DIAS_ANTERIORES; i++) {
-      dia = vespera(dia)
-      lista.push(dia)
+    const set = new Set<string>([visita.data])
+    const limite = dataComparavel(visita.data)
+    for (const v of visitas) {
+      if (v.pdr.cnpj !== visita.pdr.cnpj) continue
+      const n = dataComparavel(v.data)
+      if (n && n <= limite) set.add(v.data)
     }
-    return lista
-  }, [visita.data])
+    for (const d of visita.diaAnterior) set.add(d.data)
+    return [...set].sort((a, b) => dataComparavel(b) - dataComparavel(a))
+  }, [visita.data, visita.pdr.cnpj, visita.diaAnterior, visitas])
 
   /** visita da unidade naquele dia — é o que torna a linha clicável */
   const visitaDoDia = (data: string) =>
@@ -1132,9 +1123,10 @@ function AbaDiaAnterior({
       >
         <div className="panel__body" style={{ paddingBottom: 12 }}>
           <span className="cell-muted">
-            CNPJ {visita.pdr.cnpj} — o dia da visita ({visita.data}) e os {DIAS_ANTERIORES} dias
-            anteriores, em kg. A linha da visita vem do bloco 3 (Acumulado) e não se edita aqui. Dia sem inserção fica como não informado e zerado. Cada tecnologia aceita no
-            máximo {fmtKg(teto)}.{' '}
+            CNPJ {visita.pdr.cnpj} — só os dias com visita ou lançamento nesta
+            unidade, em kg. Sem visita no meio (ex.: 09 e 11), o dia 10 não
+            aparece. A linha da visita vem do bloco 3 (Acumulado) e não se edita
+            aqui. Cada tecnologia aceita no máximo {fmtKg(teto)}.{' '}
             {informados.length > 0 && `${informados.length} dia(s) informado(s).`}
           </span>
         </div>

@@ -9,9 +9,10 @@ import {
   enviarParaOperacao,
   obterParametros,
   registrarValidacao,
+  useUsuarioLogado,
 } from '../store'
 import { aplicarLiberacoes, type Alerta } from '../analise'
-import type { Visita } from '../types'
+import { podeReabrirVisita, type Visita } from '../types'
 import { fmtDataHora } from '../format'
 
 export default function AbaComunicacao({
@@ -26,8 +27,10 @@ export default function AbaComunicacao({
   onIrParaAnalise: () => void
 }) {
   const [certificando, setCertificando] = useState(false)
-  const [enviando, setEnviando] = useState(false)
+  const [destino, setDestino] = useState<'central' | 'operacao' | null>(null)
   const [enviandoErros, setEnviandoErros] = useState(false)
+  const usuario = useUsuarioLogado()
+  const reabre = podeReabrirVisita(usuario.perfil)
 
   const { ativos } = aplicarLiberacoes(alertas, visita.errosLiberados)
   const erros = ativos.filter((a) => a.severidade === 'erro')
@@ -104,14 +107,24 @@ export default function AbaComunicacao({
             </button>
           )}
           {naCentral && (
-            <button className="btn btn--dark" type="button" onClick={() => setEnviando(true)}>
+            <button className="btn btn--dark" type="button" onClick={() => setDestino('operacao')}>
               Enviar para operação
             </button>
           )}
           {naOperacao && (
-            <button className="btn btn--dark" type="button" onClick={() => setEnviando(true)}>
+            <button className="btn btn--dark" type="button" onClick={() => setDestino('central')}>
               Enviar para central
             </button>
+          )}
+          {certificada && reabre && (
+            <>
+              <button className="btn btn--dark" type="button" onClick={() => setDestino('central')}>
+                Voltar para a Central
+              </button>
+              <button className="btn btn--dark" type="button" onClick={() => setDestino('operacao')}>
+                Voltar para a Operação
+              </button>
+            </>
           )}
           <button
             className="btn btn--certificar"
@@ -124,21 +137,43 @@ export default function AbaComunicacao({
         </div>
       </Panel>
 
-      {enviando && (
+      {destino && (
         <ModalConfirmarEnvio
-          titulo={naOperacao ? 'Enviar para a Central' : 'Enviar para a Operação'}
-          pergunta={
-            naOperacao
-              ? 'Tem certeza que deseja enviar esta visita para a Central?'
-              : 'Tem certeza que deseja enviar esta visita para a Operação?'
+          titulo={
+            certificada
+              ? destino === 'central'
+                ? 'Voltar para a Central'
+                : 'Voltar para a Operação'
+              : destino === 'central'
+                ? 'Enviar para a Central'
+                : 'Enviar para a Operação'
           }
-          confirmarLabel={naOperacao ? 'Enviar para central' : 'Enviar para operação'}
-          onClose={() => setEnviando(false)}
+          pergunta={
+            certificada
+              ? destino === 'central'
+                ? 'A visita certificada volta para a Central de correção. Confirma?'
+                : 'A visita certificada volta para a Operação de correção. Confirma?'
+              : destino === 'central'
+                ? 'Tem certeza que deseja enviar esta visita para a Central?'
+                : 'Tem certeza que deseja enviar esta visita para a Operação?'
+          }
+          confirmarLabel={
+            certificada
+              ? destino === 'central'
+                ? 'Voltar para a Central'
+                : 'Voltar para a Operação'
+              : destino === 'central'
+                ? 'Enviar para central'
+                : 'Enviar para operação'
+          }
+          onClose={() => setDestino(null)}
           onConfirmar={() => {
-            if (naOperacao) devolverParaCentral(visita.cod)
+            if (destino === 'central') devolverParaCentral(visita.cod)
             else enviarParaOperacao(visita.cod)
-            setEnviando(false)
-            onAviso(naOperacao ? 'Visita enviada à Central.' : 'Visita enviada à Operação.')
+            setDestino(null)
+            onAviso(
+              destino === 'central' ? 'Visita enviada à Central.' : 'Visita enviada à Operação.',
+            )
           }}
         />
       )}

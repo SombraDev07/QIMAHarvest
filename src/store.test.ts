@@ -14,6 +14,7 @@ import {
   excluirCarga,
   certificarVisita,
   gruposDeRateio,
+  historicoAcumuladoUnidade,
   migrarCargas,
   obterVisita,
   salvarCarga,
@@ -23,7 +24,7 @@ import {
 import { PDRS_CATALOGO_INICIAIS, VISITAS_INICIAIS } from './data/mock'
 import { mascaraProdutor, vespera } from './format'
 import { analisarVisita } from './analise'
-import type { Carga, PdrCatalogo } from './types'
+import { pesoVolumeLiquido, type Carga, type PdrCatalogo } from './types'
 
 const COD = VISITAS_INICIAIS[0].cod
 
@@ -599,5 +600,63 @@ describe('aplicarCorrecoesEmMassa', () => {
     expect(v.avisoImport?.alertaIds).toContain('romaneio-DUP-99')
     expect(v.avisoImport?.arquivos).toEqual(['romaneio.csv'])
     expect(v.logAlteracoes.at(-1)?.resumo).toContain(ids[0])
+  })
+})
+
+describe('pesoVolumeLiquido', () => {
+  const base: Carga = {
+    id: 'VOL-1',
+    data: '01/06/2026',
+    hora: '10:00',
+    placa: 'AAA1A11',
+    produtor: 'FAZENDA',
+    cpfCnpjProdutor: '123.456.789-00',
+    romaneio: '1',
+    pesoLiquido: 40000,
+    pesoComDesconto: 38000,
+    classificacao: 'Participante',
+    rateio: false,
+    acompanhada: true,
+  }
+
+  it('usa o peso com desconto quando ele existe', () => {
+    expect(pesoVolumeLiquido(base)).toBe(38000)
+  })
+
+  it('cai no peso sem desconto quando o com desconto é zero', () => {
+    expect(pesoVolumeLiquido({ ...base, pesoComDesconto: 0 })).toBe(40000)
+  })
+
+  it('cai no peso sem desconto quando o com desconto não foi informado', () => {
+    expect(
+      pesoVolumeLiquido({
+        ...base,
+        pesoComDesconto: 0,
+        naoInformado: { pesoComDesconto: true },
+      }),
+    ).toBe(40000)
+  })
+
+  it('zera quando o líquido também não foi informado', () => {
+    expect(
+      pesoVolumeLiquido({
+        ...base,
+        pesoLiquido: 0,
+        pesoComDesconto: 0,
+        naoInformado: { pesoLiquido: true, pesoComDesconto: true },
+      }),
+    ).toBe(0)
+  })
+})
+
+describe('histórico de acumulado sem dias inventados', () => {
+  it('só lista dias que têm visita da unidade', () => {
+    const v = VISITAS_INICIAIS[0]
+    const reais = new Set(
+      VISITAS_INICIAIS.filter((x) => x.pdr.cnpj === v.pdr.cnpj).map((x) => x.data),
+    )
+    const h = historicoAcumuladoUnidade(v.pdr.cnpj, new Date(2099, 0, 1))
+    expect(h.dias.length).toBeGreaterThan(0)
+    for (const d of h.dias) expect(reais.has(d.periodo), d.periodo).toBe(true)
   })
 })
