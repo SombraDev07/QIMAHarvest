@@ -11,6 +11,7 @@ import {
   IconMapa,
   IconUpload,
   IconUsuarios,
+  IconEditar,
 } from '../components/icons'
 
 const MODULOS = [
@@ -29,6 +30,12 @@ const MODULOS = [
     titulo: 'Importar visitas',
     desc: 'Carga em lote das planilhas de visita e de cargas',
     to: '/administracao/importar-visitas',
+  },
+  {
+    Icone: IconEditar,
+    titulo: 'Corrigir em lote',
+    desc: 'Ajustes em massa de carga, dia anterior e acumulado',
+    to: '/administracao/corrigir-visitas',
   },
   {
     Icone: IconEngrenagem,

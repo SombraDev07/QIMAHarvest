@@ -443,7 +443,7 @@ function AbaAnalise({
             </div>
             <div className="cartoes-alerta">
               {erros.map((a) => (
-                <CartaoAlerta key={a.id} alerta={a} onIr={onIr} />
+                <CartaoAlerta key={a.id} alerta={a} visita={visita} onIr={onIr} />
               ))}
             </div>
           </>
@@ -464,7 +464,7 @@ function AbaAnalise({
             {verAtencoes ? (
               <div className="cartoes-alerta">
                 {atencoes.map((a) => (
-                  <CartaoAlerta key={a.id} alerta={a} onIr={onIr} />
+                  <CartaoAlerta key={a.id} alerta={a} visita={visita} onIr={onIr} />
                 ))}
               </div>
             ) : (
@@ -478,7 +478,12 @@ function AbaAnalise({
                   >
                     <span className="alerta__sev">ATENÇÃO</span>
                     <span className="alerta__corpo">
-                      <span className="alerta__regra">{a.regra}</span>
+                      <span className="alerta__regra">
+                        {veioDoImport(visita, a.id) && (
+                          <span className="avisa-import">Avisa Import</span>
+                        )}{' '}
+                        {a.regra}
+                      </span>
                     </span>
                     <span className={`chip chip--responsavel-${a.responsavel}`}>
                       {a.responsavel === 'operacao' ? 'Operação' : 'Analista'}
@@ -498,7 +503,20 @@ function AbaAnalise({
   )
 }
 
-function CartaoAlerta({ alerta, onIr }: { alerta: Alerta; onIr: (a: Alerta) => void }) {
+function veioDoImport(visita: Visita, alertaId: string) {
+  return Boolean(visita.avisoImport?.alertaIds.includes(alertaId))
+}
+
+function CartaoAlerta({
+  alerta,
+  visita,
+  onIr,
+}: {
+  alerta: Alerta
+  visita: Visita
+  onIr: (a: Alerta) => void
+}) {
+  const importado = veioDoImport(visita, alerta.id)
   return (
     <button
       type="button"
@@ -510,13 +528,16 @@ function CartaoAlerta({ alerta, onIr }: { alerta: Alerta; onIr: (a: Alerta) => v
           <IconAlerta size={14} />
           {alerta.severidade === 'erro' ? 'ERRO' : 'ATENÇÃO'}
         </span>
+        {importado && <span className="avisa-import">Avisa Import</span>}
         <span className={`chip chip--responsavel-${alerta.responsavel}`}>
           {alerta.responsavel === 'operacao' ? 'Operação' : 'Analista'}
         </span>
         {alerta.valor && <span className="cartao-alerta__valor">{alerta.valor}</span>}
       </span>
 
-      <span className="cartao-alerta__regra">{alerta.regra}</span>
+      <span className="cartao-alerta__regra">
+        {importado ? `(Avisa Import) ${alerta.regra}` : alerta.regra}
+      </span>
       <span className="cartao-alerta__detalhe">{alerta.detalhe}</span>
 
       <span className="cartao-alerta__rodape">

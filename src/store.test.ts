@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   adicionarCargas,
   adicionarPdr,
+  aplicarCorrecoesEmMassa,
   atualizarPdr,
   definirInformouDiaAnterior,
   definirSituacaoPdr,
@@ -11,6 +12,7 @@ import {
   obterPdrsCatalogo,
   removerPdr,
   excluirCarga,
+  certificarVisita,
   gruposDeRateio,
   migrarCargas,
   obterVisita,
@@ -191,6 +193,34 @@ describe('salvarCarga — saída do rateio', () => {
 
     expect(cargasDoGrupo(grupo)).toHaveLength(1)
     expect(buscarCarga(avulsa.id)?.rateio).toBe(true)
+  })
+})
+
+describe('salvarCarga — log de alterações', () => {
+  it('grava no log quando o analista muda a carga na tela', () => {
+    const { ids } = criarGrupo(2)
+    const carga = buscarCarga(ids[0])!
+    const antes = obterVisita(COD)!.logAlteracoes.length
+
+    salvarCarga(COD, { ...carga, placa: 'LOG1A23' })
+
+    const logs = obterVisita(COD)!.logAlteracoes
+    expect(logs.length).toBe(antes + 1)
+    expect(logs.at(-1)).toMatchObject({
+      origem: 'edicao',
+      tipo: 'carga',
+      chave: carga.id,
+      planilha: 'tela',
+    })
+    expect(logs.at(-1)?.resumo).toContain('placa')
+  })
+
+  it('não grava log se a carga foi salva sem mudança', () => {
+    const { ids } = criarGrupo(2)
+    const carga = buscarCarga(ids[0])!
+    const antes = obterVisita(COD)!.logAlteracoes.length
+    salvarCarga(COD, { ...carga })
+    expect(obterVisita(COD)!.logAlteracoes.length).toBe(antes)
   })
 })
 
@@ -512,5 +542,62 @@ describe('gruposDeRateio', () => {
     const idsAgrupados = gruposDeRateio(cargas).flatMap((g) => g.cargas.map((c) => c.id))
     const avulsas = cargas.filter((c) => !c.grupoRateio).map((c) => c.id)
     expect(idsAgrupados.filter((id) => avulsas.includes(id))).toHaveLength(0)
+  })
+})
+
+describe('aplicarCorrecoesEmMassa', () => {
+  const meta = {
+    arquivos: { cargas: 'cargas.csv', diaAnterior: 'dia.csv', acumulado: 'acumulado.csv' },
+    alertasDe: () => [] as { id: string; regra: string; detalhe: string }[],
+  }
+
+  it('corrige carga, dia anterior e acumulado de uma vez', () => {
+    const { ids } = criarGrupo(2)
+    const id = ids[0]
+    const dataVisita = obterVisita(COD)!.data
+
+    const r = aplicarCorrecoesEmMassa(
+      {
+        cargas: [{ id, produtor: 'PRODUTOR CORRIGIDO' }],
+        diasAnteriores: [
+          {
+            cod: COD,
+            dia: '01/01/2026',
+            valores: { Negativa: 10, Declarada: 0, Positiva: 0, Participante: 0 },
+          },
+        ],
+        acumulados: [{ cod: COD, dia: dataVisita, valores: { Positiva: 99 } }],
+      },
+      meta,
+    )
+
+    expect(r).toMatchObject({ cargas: 1, diasAnteriores: 1, acumulados: 1, reabertas: [] })
+    expect(buscarCarga(id)?.produtor).toBe('PRODUTOR CORRIGIDO')
+    expect(diaAnteriorDe(obterVisita(COD)!, '01/01/2026').valores.Negativa).toBe(10)
+    expect(obterVisita(COD)!.acumulado.valores.Positiva).toBe(99)
+    expect(obterVisita(COD)!.logAlteracoes.length).toBeGreaterThan(0)
+  })
+
+  it('reabre na Central 1 e marca aviso de import quando gera erro', () => {
+    const { ids } = criarGrupo(2)
+    certificarVisita(COD, [])
+    expect(obterVisita(COD)!.situacao).toBe('certificada')
+
+    aplicarCorrecoesEmMassa(
+      { cargas: [{ id: ids[0], romaneio: 'DUP-99' }] },
+      {
+        arquivos: { cargas: 'romaneio.csv' },
+        alertasDe: () => [
+          { id: 'romaneio-DUP-99', regra: 'Romaneio duplicado (3.6.2)', detalhe: 'duplicado' },
+        ],
+      },
+    )
+
+    const v = obterVisita(COD)!
+    expect(v.situacao).toBe('central-correcao')
+    expect(v.rodada).toBe(1)
+    expect(v.avisoImport?.alertaIds).toContain('romaneio-DUP-99')
+    expect(v.avisoImport?.arquivos).toEqual(['romaneio.csv'])
+    expect(v.logAlteracoes.at(-1)?.resumo).toContain(ids[0])
   })
 })

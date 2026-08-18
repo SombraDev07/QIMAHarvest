@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { Link, Outlet, useParams } from 'react-router-dom'
 import { LogoQima } from './Logo'
 import { Modal, Toast } from './ui'
-import { IconLink, IconLista } from './icons'
+import { IconLink, IconLista, IconLog } from './icons'
 import { situacaoPorId } from '../data/mock'
 import { useFalhaPersistencia, useUsuarioLogado, useVisita } from '../store'
 import { iniciais } from '../usuario'
 import MinhaSenha from './MinhaSenha'
 import SeletorIdioma from './SeletorIdioma'
+import LogAlteracoes from './LogAlteracoes'
 
 /** copia com fallback para navegadores sem permissão de clipboard */
 async function copiar(texto: string): Promise<boolean> {
@@ -39,9 +40,11 @@ export default function LayoutVisita() {
   const [aviso, setAviso] = useState<string | null>(null)
   /** aberto quando o navegador bloqueia a cópia automática */
   const [linkManual, setLinkManual] = useState(false)
+  const [mostrarLog, setMostrarLog] = useState(false)
 
   const meta = visita ? situacaoPorId(visita.situacao) : null
   const link = window.location.href
+  const qtdLog = visita?.logAlteracoes.length ?? 0
 
   return (
     <div className="app">
@@ -75,6 +78,18 @@ export default function LayoutVisita() {
         </div>
 
         <div className="topbar__spacer" />
+
+        {visita && (
+          <button
+            type="button"
+            className="btn-topo"
+            title="Log de alterações desta visita"
+            onClick={() => setMostrarLog(true)}
+          >
+            <IconLog size={15} /> Log
+            {qtdLog > 0 && <span className="btn-topo__count">{qtdLog}</span>}
+          </button>
+        )}
 
         <button
           type="button"
@@ -110,6 +125,25 @@ export default function LayoutVisita() {
       )}
 
       <Outlet />
+
+      {mostrarLog && visita && (
+        <Modal
+          titulo="Log de alterações"
+          subtitulo="Quem mudou o quê nesta visita — edição na tela e import em massa"
+          largo
+          onClose={() => setMostrarLog(false)}
+          rodape={
+            <>
+              <span className="spacer" />
+              <button className="btn btn--primary" type="button" onClick={() => setMostrarLog(false)}>
+                Fechar
+              </button>
+            </>
+          }
+        >
+          <LogAlteracoes itens={visita.logAlteracoes} />
+        </Modal>
+      )}
 
       {linkManual && (
         <Modal

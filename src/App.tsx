@@ -2,7 +2,7 @@ import { Suspense, lazy } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import LayoutVisita from './components/LayoutVisita'
-import { IconAlerta, IconFotos, IconRotas } from './components/icons'
+import { IconAlerta, IconRotas } from './components/icons'
 import EmBreve from './pages/EmBreve'
 
 /**
@@ -16,7 +16,9 @@ const Parametros = lazy(() => import('./pages/Parametros'))
 const PDRs = lazy(() => import('./pages/PDRs'))
 const Usuarios = lazy(() => import('./pages/Usuarios'))
 const ImportarVisitas = lazy(() => import('./pages/ImportarVisitas'))
+const CorrigirVisitas = lazy(() => import('./pages/CorrigirVisitas'))
 const Relatorios = lazy(() => import('./pages/Relatorios'))
+const AnaliseFotos = lazy(() => import('./pages/AnaliseFotos'))
 const Solicitacoes = lazy(() => import('./pages/Solicitacoes'))
 const VisitaDetalhe = lazy(() => import('./pages/VisitaDetalhe'))
 const Visitas = lazy(() => import('./pages/Visitas'))
@@ -36,6 +38,7 @@ export default function App() {
           <Route path="/administracao/parametros" element={<Parametros />} />
           <Route path="/administracao/usuarios" element={<Usuarios />} />
           <Route path="/administracao/importar-visitas" element={<ImportarVisitas />} />
+          <Route path="/administracao/corrigir-visitas" element={<CorrigirVisitas />} />
           <Route path="/acumulado" element={<Acumulado />} />
           <Route path="/visitas" element={<Visitas />} />
           <Route path="/visitas/:situacao" element={<VisitasLista />} />
@@ -60,16 +63,7 @@ export default function App() {
             }
           />
           <Route path="/relatorios" element={<Relatorios />} />
-          <Route
-            path="/analise-fotos"
-            element={
-              <EmBreve
-                titulo="Análise de Fotos"
-                icone={<IconFotos size={36} />}
-                texto="Triagem das evidências fotográficas enviadas pelos tablets."
-              />
-            }
-          />
+          <Route path="/analise-fotos" element={<AnaliseFotos />} />
           <Route path="/solicitacoes" element={<Solicitacoes />} />
           <Route path="/importar-visitas" element={<ImportarVisitas />} />
           <Route path="*" element={<Navigate to="/visitas" replace />} />

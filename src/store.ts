@@ -39,10 +39,18 @@ import {
   type TipoSolicitacao,
   type Usuario,
   type Visita,
+  type LogAlteracao,
+  CLASSIFICACOES,
   SENHA_MIN,
   podeDefinirCredenciais,
   podeEditarVisita,
 } from './types'
+import {
+  aplicarPatches,
+  type PatchCarga,
+  type PatchVolumes,
+  type ResumoCorrecao,
+} from './importacao/correcao'
 
 /* ------------------------------------------------------------------ *
  * Store em memória. Substituir estas funções por chamadas HTTP quando
@@ -231,6 +239,7 @@ function montarEstadoInicial(): Visita[] {
   const normalizar = (v: Visita): Visita => ({
     ...v,
     diaAnterior: v.diaAnterior ?? [],
+    logAlteracoes: v.logAlteracoes ?? [],
     cargas: v.cargas.map(normalizarCarga),
   })
 
@@ -306,12 +315,79 @@ function ajustarRecebimento(v: Visita): Visita {
 /* ------------------------------------------------------------------ *
  * Ações
  * ------------------------------------------------------------------ */
+/** digitação de acumulado/dia anterior grava a cada tecla — junta na mesma entrada */
+const JANELA_LOG_MS = 20_000
+
+function appendLog(
+  v: Visita,
+  patch: Pick<LogAlteracao, 'origem' | 'tipo' | 'chave' | 'resumo'> & { planilha?: string },
+): Visita {
+  const lista = v.logAlteracoes ?? []
+  const item: LogAlteracao = {
+    id: `LOG-${v.cod}-${Date.now()}-${lista.length}`,
+    ts: Date.now(),
+    por: obterUsuarioLogado().nome,
+    planilha: patch.planilha ?? 'tela',
+    origem: patch.origem,
+    tipo: patch.tipo,
+    chave: patch.chave,
+    resumo: patch.resumo,
+  }
+  const ultimo = lista.at(-1)
+  const juntaDigitacao =
+    (item.tipo === 'acumulado' || item.tipo === 'dia-anterior') &&
+    ultimo &&
+    ultimo.origem === item.origem &&
+    ultimo.tipo === item.tipo &&
+    ultimo.chave === item.chave &&
+    ultimo.por === item.por &&
+    item.ts - ultimo.ts < JANELA_LOG_MS
+  if (juntaDigitacao && ultimo) {
+    return { ...v, logAlteracoes: [...lista.slice(0, -1), { ...item, id: ultimo.id }] }
+  }
+  return { ...v, logAlteracoes: [...lista, item] }
+}
+
+function resumoDiffCarga(antes: Carga | undefined, depois: Carga): string {
+  if (!antes) return `Carga ${depois.id} inserida`
+  const partes: string[] = []
+  if (antes.produtor !== depois.produtor) partes.push('produtor')
+  if (antes.romaneio !== depois.romaneio) partes.push('romaneio')
+  if (antes.pesoLiquido !== depois.pesoLiquido) partes.push('peso líquido')
+  if (antes.pesoComDesconto !== depois.pesoComDesconto) partes.push('peso c/ desconto')
+  if (antes.classificacao !== depois.classificacao) partes.push('tecnologia')
+  if (antes.data !== depois.data) partes.push('data')
+  if (antes.hora !== depois.hora) partes.push('hora')
+  if (antes.placa !== depois.placa) partes.push('placa')
+  if (antes.acompanhada !== depois.acompanhada) partes.push('acompanhada')
+  if (antes.rateio !== depois.rateio) partes.push('rateio')
+  return partes.length ? `Carga ${depois.id}: ${partes.join(', ')}` : ''
+}
+
 export function salvarDadosVisita(cod: number, patch: Partial<DadosVisita>) {
   alterarVisita(cod, (v) => ({ ...v, dadosVisita: { ...v.dadosVisita, ...patch } }))
 }
 
 export function salvarAcumulado(cod: number, patch: Partial<Acumulado>) {
-  alterarVisita(cod, (v) => ({ ...v, acumulado: { ...v.acumulado, ...patch } }))
+  alterarVisita(cod, (v) => {
+    const proximo = { ...v, acumulado: { ...v.acumulado, ...patch } }
+    const campos: string[] = []
+    if (patch.informadoPeloPdr && patch.informadoPeloPdr !== v.acumulado.informadoPeloPdr)
+      campos.push(`informado=${patch.informadoPeloPdr}`)
+    if (patch.origem && patch.origem !== v.acumulado.origem) campos.push(`origem=${patch.origem}`)
+    if (patch.valores) {
+      for (const k of Object.keys(patch.valores) as Classificacao[]) {
+        if (patch.valores[k] !== v.acumulado.valores[k]) campos.push(`${k} ${patch.valores[k]}`)
+      }
+    }
+    if (campos.length === 0) return proximo
+    return appendLog(proximo, {
+      origem: 'edicao',
+      tipo: 'acumulado',
+      chave: v.data,
+      resumo: `Acumulado: ${campos.join(', ')}`,
+    })
+  })
 }
 
 /**
@@ -354,13 +430,25 @@ function upsertDiaAnterior(
  * 0/0/0/0, e deixar valor para trás guardaria um número que a tela não mostra.
  */
 export function definirInformouDiaAnterior(cod: number, data: string, informou: SimNao) {
-  alterarVisita(cod, (v) => ({
-    ...v,
-    diaAnterior: upsertDiaAnterior(v.diaAnterior, cod, data, {
-      informouDiaAnterior: informou,
-      ...(informou === 'Não' ? { valores: ZERADO } : {}),
-    }),
-  }))
+  alterarVisita(cod, (v) => {
+    const atual = v.diaAnterior.find((d) => d.data === data)
+    if (atual?.informouDiaAnterior === informou) return v
+    return appendLog(
+      {
+        ...v,
+        diaAnterior: upsertDiaAnterior(v.diaAnterior, cod, data, {
+          informouDiaAnterior: informou,
+          ...(informou === 'Não' ? { valores: ZERADO } : {}),
+        }),
+      },
+      {
+        origem: 'edicao',
+        tipo: 'dia-anterior',
+        chave: data,
+        resumo: `Dia anterior ${data}: ${informou === 'Sim' ? 'informado' : 'não informado'}`,
+      },
+    )
+  })
 }
 
 export function salvarDiaAnterior(
@@ -368,10 +456,19 @@ export function salvarDiaAnterior(
   data: string,
   valores: Record<Classificacao, number>,
 ) {
-  alterarVisita(cod, (v) => ({
-    ...v,
-    diaAnterior: upsertDiaAnterior(v.diaAnterior, cod, data, { valores }),
-  }))
+  alterarVisita(cod, (v) => {
+    const atual = v.diaAnterior.find((d) => d.data === data)
+    if (atual && CLASSIFICACOES.every((c) => atual.valores[c] === valores[c])) return v
+    return appendLog(
+      { ...v, diaAnterior: upsertDiaAnterior(v.diaAnterior, cod, data, { valores }) },
+      {
+        origem: 'edicao',
+        tipo: 'dia-anterior',
+        chave: data,
+        resumo: `Dia anterior ${data}: ${CLASSIFICACOES.map((c) => `${c} ${valores[c]}`).join(' · ')}`,
+      },
+    )
+  })
 }
 
 /** o registro do dia, ou o padrão não-informado quando o auditor ainda não mexeu */
@@ -435,13 +532,21 @@ export function salvarCarga(cod: number, carga: Carga) {
       : [...v.cargas, carga]
     const cargas = sincronizarGrupo(base, carga)
     const origem = anterior?.grupoRateio
-    return {
+    const resumo = resumoDiffCarga(anterior, carga)
+    const proximo = {
       ...v,
       cargas:
         origem && origem !== carga.grupoRateio
           ? dissolverGrupoUnitario(cargas, origem)
           : cargas,
     }
+    if (!resumo) return proximo
+    return appendLog(proximo, {
+      origem: 'edicao',
+      tipo: 'carga',
+      chave: carga.id,
+      resumo,
+    })
   })
 }
 
@@ -451,20 +556,121 @@ export function adicionarCargas(cod: number, novas: Carga[]) {
     novas.forEach((c) => {
       cargas = sincronizarGrupo(cargas, c)
     })
-    return { ...v, cargas }
+    const ids = novas.map((c) => c.id).join(', ')
+    return appendLog(
+      { ...v, cargas },
+      {
+        origem: 'edicao',
+        tipo: 'carga',
+        chave: novas.map((c) => c.id).join(','),
+        resumo: novas.length === 1 ? `Carga ${ids} inserida` : `Cargas inseridas: ${ids}`,
+      },
+    )
   })
+}
+
+/**
+ * Correção em lote: só atualiza o que já existe. Visita que ficar com erro
+ * volta para a Central de Correção na 1ª passagem.
+ */
+export function aplicarCorrecoesEmMassa(
+  input: {
+    cargas?: PatchCarga[]
+    diasAnteriores?: PatchVolumes[]
+    acumulados?: PatchVolumes[]
+  },
+  meta: {
+    arquivos: { cargas?: string; diaAnterior?: string; acumulado?: string }
+    alertasDe: (v: Visita) => { id: string; regra: string; detalhe: string }[]
+  },
+): ResumoCorrecao & { reabertas: number[] } {
+  const { visitas: novo, resumo, alteracoes } = aplicarPatches(estado, input)
+  const por = obterUsuarioLogado().nome
+  const ts = Date.now()
+  const nomePlanilha = (tipo: 'cargas' | 'dia-anterior' | 'acumulado') => {
+    if (tipo === 'cargas') return meta.arquivos.cargas || 'cargas'
+    if (tipo === 'dia-anterior') return meta.arquivos.diaAnterior || 'dia-anterior'
+    return meta.arquivos.acumulado || 'acumulado'
+  }
+  const arquivosUsados = [
+    meta.arquivos.cargas,
+    meta.arquivos.diaAnterior,
+    meta.arquivos.acumulado,
+  ].filter((n): n is string => Boolean(n))
+
+  const porCod = new Map(novo.map((v) => [v.cod, ajustarRecebimento(v)]))
+  const reabertas = new Set<number>()
+  let seqLog = Date.now()
+
+  const logsPorVisita = new Map<number, LogAlteracao[]>()
+  for (const a of alteracoes) {
+    const lista = logsPorVisita.get(a.cod) ?? []
+    lista.push({
+      id: `LOG-${a.cod}-${++seqLog}`,
+      ts,
+      por,
+      origem: 'import-correcao',
+      planilha: nomePlanilha(a.planilha),
+      tipo: a.tipo,
+      chave: a.chave,
+      resumo: a.resumo,
+    })
+    logsPorVisita.set(a.cod, lista)
+  }
+
+  for (const [cod, logs] of logsPorVisita) {
+    const atual = porCod.get(cod)
+    if (!atual) continue
+    let v: Visita = {
+      ...atual,
+      logAlteracoes: [...(atual.logAlteracoes ?? []), ...logs],
+    }
+    const erros = v.situacao === 'cancelada' ? [] : meta.alertasDe(v)
+    if (erros.length > 0) {
+      reabertas.add(cod)
+      v = registrarSistema(
+        {
+          ...v,
+          situacao: 'central-correcao',
+          rodada: 1,
+          avisoImport: { por, ts, arquivos: arquivosUsados, alertaIds: erros.map((e) => e.id) },
+        },
+        `Importação em massa por ${por} reabriu a visita na Central de Correção (1ª passagem). Planilha(s): ${arquivosUsados.join(', ') || '—'}. ${erros.length} erro(s).`,
+      )
+    } else {
+      v = registrarSistema(
+        { ...v, avisoImport: undefined },
+        `Importação em massa por ${por} atualizou a visita sem gerar erro. Planilha(s): ${arquivosUsados.join(', ') || '—'}.`,
+      )
+    }
+    porCod.set(cod, v)
+    visitasAlteradas.add(cod)
+  }
+
+  estado = estado.map((v) => porCod.get(v.cod) ?? v)
+  notificar()
+  return { ...resumo, reabertas: [...reabertas] }
 }
 
 export function excluirCarga(cod: number, cargaId: string) {
   alterarVisita(cod, (v) => {
     const alvo = v.cargas.find((c) => c.id === cargaId)
+    if (!alvo) return v
     const restantes = v.cargas.filter((c) => c.id !== cargaId)
-    return {
-      ...v,
-      cargas: alvo?.grupoRateio
-        ? dissolverGrupoUnitario(restantes, alvo.grupoRateio)
-        : restantes,
-    }
+    return appendLog(
+      {
+        ...v,
+        cargas: alvo.grupoRateio
+          ? dissolverGrupoUnitario(restantes, alvo.grupoRateio)
+          : restantes,
+      },
+      {
+        origem: 'edicao',
+        tipo: 'carga',
+        chave: cargaId,
+        resumo: `Carga ${cargaId} excluída`,
+      },
+    )
   })
 }
 
@@ -478,6 +684,7 @@ export function excluirCargas(cod: number, ids: string[]) {
  * nas duas abas. O grupo inteiro migrando permanece rateio.
  */
 export function migrarCargas(cod: number, ids: string[], acompanhada: boolean) {
+  if (ids.length === 0) return
   const idSet = new Set(ids)
   alterarVisita(cod, (v) => {
     const gruposParciais = new Set<string>()
@@ -500,7 +707,16 @@ export function migrarCargas(cod: number, ids: string[], acompanhada: boolean) {
     for (const grupo of gruposParciais) {
       resultado = dissolverGrupoUnitario(resultado, grupo)
     }
-    return { ...v, cargas: resultado }
+    const destino = acompanhada ? 'acompanhadas' : 'não acompanhadas'
+    return appendLog(
+      { ...v, cargas: resultado },
+      {
+        origem: 'edicao',
+        tipo: 'carga',
+        chave: ids.join(','),
+        resumo: `Cargas ${ids.join(', ')} migradas para ${destino}`,
+      },
+    )
   })
 }
 
@@ -971,6 +1187,7 @@ export function criarVisitaFake(pdr: PdrCatalogo, data: string): Visita {
     ocorrencias: [],
     mensagens: [],
     errosLiberados: [],
+    logAlteracoes: [],
     motivo: 'INSERÇÃO_AUTO — visita criada via importação de acumulado',
   }
 }

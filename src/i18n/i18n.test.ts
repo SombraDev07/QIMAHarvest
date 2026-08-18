@@ -95,7 +95,7 @@ describe('cobertura do dicionário', () => {
    * tradução esquecida que foi copiada por engano.
    */
   it('só repete o português nas palavras que não mudam', () => {
-    const IGUAIS_DE_PROPOSITO = ['Supervisor', 'Login', 'Latitude', 'Longitude', 'Total', 'Use']
+    const IGUAIS_DE_PROPOSITO = ['Supervisor', 'Login', 'Latitude', 'Longitude', 'Total', 'Use', 'Log']
     const iguais = Object.entries(EN)
       .filter(([pt, en]) => pt === en)
       .map(([pt]) => pt)

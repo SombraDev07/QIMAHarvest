@@ -143,6 +143,26 @@ export interface Validacao {
   atencoes: number
 }
 
+/** import em massa que reabriu a visita na Central */
+export interface AvisoImport {
+  por: string
+  ts: number
+  arquivos: string[]
+  alertaIds: string[]
+}
+
+export interface LogAlteracao {
+  id: string
+  ts: number
+  por: string
+  origem: 'import-correcao' | 'edicao'
+  /** nome do arquivo no import; "tela" quando a alteração veio do formulário */
+  planilha: string
+  tipo: 'carga' | 'dia-anterior' | 'acumulado'
+  chave: string
+  resumo: string
+}
+
 export const CAIXA_FITA_MIN = 1
 export const CAIXA_FITA_MAX = 100
 
@@ -252,6 +272,13 @@ export interface Visita {
   errosLiberados: ErroLiberado[]
   ultimaValidacao?: Validacao
   motivo?: string
+  /**
+   * Correção em lote que gerou erro: a análise mostra "(Avisa Import)" na
+   * frente dos alertas listados aqui, até o analista corrigir aquele ponto.
+   */
+  avisoImport?: AvisoImport
+  /** quem alterou o quê — import em massa e registros de sistema */
+  logAlteracoes: LogAlteracao[]
 }
 
 export interface GrupoRateio {

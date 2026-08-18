@@ -20,6 +20,7 @@ import type {
 } from '../types'
 import { CLASSIFICACOES, ORIGENS_ACUMULADO } from '../types'
 import { mascaraProdutor } from '../format'
+import { gerarFotoMock } from '../fotos/evidencia'
 
 /* ------------------------------------------------------------------ *
  * PRNG determinístico — os dados fictícios precisam ser sempre iguais
@@ -249,17 +250,6 @@ type GrupoBase = {
   classificacao: Classificacao
 }
 
-/** gera uma imagem de evidência simulada (offline, sem dependência externa) */
-function gerarFotoCarga(id: string, placa: string, romaneio: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480">
-    <rect width="100%" height="100%" fill="#1f2c38"/>
-    <rect x="16" y="16" width="608" height="448" fill="none" stroke="#4a5d6e" stroke-width="2" stroke-dasharray="6 6"/>
-    <text x="320" y="220" font-family="monospace" font-size="42" fill="#e7edf3" text-anchor="middle">${placa}</text>
-    <text x="320" y="266" font-family="monospace" font-size="18" fill="#9fb0c0" text-anchor="middle">Carga ${id}${romaneio ? ` · romaneio ${romaneio}` : ''}</text>
-    <text x="320" y="446" font-family="monospace" font-size="13" fill="#647688" text-anchor="middle">Evidência fotográfica enviada pelo tablet</text>
-  </svg>`
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
-}
 
 function gerarCarga(dataBase: Date, acompanhada: boolean, grupo?: GrupoBase): Carga {
   const liquido = int(28, 46) * 1000 + int(0, 999)
@@ -293,7 +283,7 @@ function gerarCarga(dataBase: Date, acompanhada: boolean, grupo?: GrupoBase): Ca
     rateio: Boolean(grupo),
     grupoRateio: grupo?.id,
     observacao: rnd() > 0.85 ? 'Motorista não apresentou a 2ª via do romaneio.' : undefined,
-    fotoUrl: temFoto ? gerarFotoCarga(id, placa, romaneio) : undefined,
+    fotoUrl: temFoto ? gerarFotoMock(id, placa, romaneio) : undefined,
     acompanhada,
   }
 }
@@ -604,6 +594,7 @@ function gerarVisitas(total: number): Visita[] {
       ocorrencias,
       mensagens: gerarMensagens(cod, dataVisita, { consultor, lider, supervisor }),
       errosLiberados: [],
+      logAlteracoes: [],
       motivo: cancelada
         ? pick([
             'Unidade fechada no dia agendado.',
@@ -683,6 +674,7 @@ const VISITA_TESTE_MUNICIPIO_PAULISTA: Visita = {
   ocorrencias: [],
   mensagens: [],
   errosLiberados: [],
+  logAlteracoes: [],
   motivo: 'INSERÇÃO_AUTO — visita criada via importação de acumulado',
 }
 

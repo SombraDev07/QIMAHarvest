@@ -166,6 +166,13 @@ export const IconNovaAba = ({ size = 13 }: Props) => (
   </svg>
 )
 
+export const IconLog = ({ size = 15 }: Props) => (
+  <svg {...base(size)}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 8v4l2.8 1.6" />
+  </svg>
+)
+
 export const IconLink = ({ size = 15 }: Props) => (
   <svg {...base(size)}>
     <path d="M10 13a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7" />

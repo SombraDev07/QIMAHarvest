@@ -65,7 +65,7 @@ export function lerPlanilha(texto: string): Linha[] {
 }
 
 /** primeira coluna cujo nome bate — a planilha varia entre "Distritor" e "Distrito" */
-const campo = (l: Linha, ...nomes: string[]): string => {
+export const campo = (l: Linha, ...nomes: string[]): string => {
   for (const n of nomes) {
     const v = l[chave(n)]
     if (v !== undefined && v !== '') return v
@@ -370,6 +370,7 @@ export function analisarPlanilhaVisitas(
               ocorrencias: [],
               mensagens: [],
               errosLiberados: [],
+              logAlteracoes: [],
             },
     }
   })
