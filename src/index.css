@@ -650,6 +650,332 @@ textarea {
   color: var(--text-soft);
 }
 
+.field__hint--erro {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.field__ni {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-800);
+  cursor: pointer;
+  user-select: none;
+}
+
+.field__ni input {
+  min-height: 0;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+
+/* cards de relatório: um por tipo de planilha */
+.relatorio-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.relatorio-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.relatorio-card__icone {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  color: var(--brand);
+  background: #b4530912;
+  border: 1px solid #b4530930;
+}
+
+.relatorio-card__corpo {
+  flex: 1;
+}
+
+.relatorio-card__titulo {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.relatorio-card__desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.relatorio-card__numeros {
+  display: flex;
+  gap: 18px;
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.relatorio-card__numeros strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* escolha dos dois arquivos da importação em lote */
+.importar-arquivos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.importar-caixa {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+.importar-caixa__topo {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* gravação falhou: precisa aparecer sem depender de o usuário procurar */
+.faixa-falha {
+  padding: 10px 22px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* troca de idioma no topo */
+.idioma {
+  display: inline-flex;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.idioma button {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.idioma button + button {
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.idioma button.is-on {
+  background: #fff;
+  color: var(--brand);
+}
+
+/* o bloco do usuário no topo agora tem uma ação ao lado do nome */
+.user {
+  gap: 10px;
+}
+
+.user .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* observação da unidade, repetida em toda visita daquele PDR */
+.alert--pdr {
+  background: #b4530910;
+  border: 1px solid #b4530938;
+  color: var(--text);
+}
+
+/* quem edita a visita vs. quem só lê */
+.tag-acesso {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-soft);
+  background: var(--bg-soft, #f1f2f4);
+  border: 1px solid var(--border);
+}
+
+.tag-acesso--sim {
+  color: #1d4ed8;
+  background: #1d4ed812;
+  border-color: #1d4ed840;
+}
+
+.usuario-celula {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user__avatar--sm {
+  width: 30px;
+  height: 30px;
+  font-size: 11px;
+  flex: none;
+}
+
+/* situação de cadastro: cor + ícone + texto, para não depender só da cor */
+.situacao {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 4px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.situacao__ponto {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1;
+}
+
+.situacao--ativo {
+  color: #0b6b51;
+  background: #0e8f6c14;
+  border-color: #0e8f6c40;
+}
+
+.situacao--ativo .situacao__ponto {
+  background: #0e8f6c;
+}
+
+.situacao--inativo {
+  color: #b91c1c;
+  background: #dc262614;
+  border-color: #dc262645;
+}
+
+.situacao--inativo .situacao__ponto {
+  background: #dc2626;
+}
+
+/* linha inteira de cadastro inativo fica recuada visualmente */
+.row-inativo > td:not(:last-child) {
+  opacity: 0.62;
+}
+
+/* campo numérico dentro da célula da tabela de Dia Anterior */
+.input-num {
+  width: 100%;
+  min-width: 96px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  font-size: 13px;
+}
+
+.input-num:disabled {
+  background: var(--bg-soft, #f4f5f7);
+  color: var(--text-soft);
+}
+
+.input-num:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: -1px;
+}
+
+.celula-erro {
+  margin-top: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--brand);
+  text-align: right;
+}
+
+/* a linha do dia da própria visita, nas duas tabelas de acumulado */
+.row-desta-visita > td {
+  background: #b4530914;
+  box-shadow: inset 0 0 0 9999px transparent;
+}
+
+.row-desta-visita > td:first-child {
+  box-shadow: inset 3px 0 0 #b45309;
+}
+
+.marca-visita {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #92400e;
+  background: #b4530920;
+  border: 1px solid #b4530945;
+  white-space: nowrap;
+}
+
+/* dia já informado ganha destaque discreto na tabela */
+.row-informado > td {
+  background: rgba(29, 78, 216, 0.04);
+}
+
+/* dia que tem visita própria abre o registro em outra aba */
+.link-visita {
+  color: var(--brand);
+  text-decoration: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.link-visita:hover {
+  text-decoration: underline;
+}
+
+.link-visita__cod {
+  font-size: 10.5px;
+  color: var(--text-soft);
+  font-weight: 500;
+}
+
 .filters__actions {
   display: flex;
   align-items: center;
@@ -892,6 +1218,19 @@ tr.in-group td:first-child {
 .cell-muted {
   color: var(--text-soft);
   font-size: 11.5px;
+}
+
+.cell-ni {
+  font-weight: 700;
+  color: var(--ink-800);
+  font-size: 12.5px;
+}
+
+.cell-id {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
 }
 
 .num {
@@ -2210,6 +2549,31 @@ tr.row-atrasada:hover > td {
   background: #ffe9cc !important;
 }
 
+/* uma divergência na tabela: regra, detalhe e responsável, todos visíveis */
+.divergencia {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 6px 0;
+}
+
+.divergencia + .divergencia {
+  border-top: 1px solid var(--border);
+}
+
+.divergencia__detalhe {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  white-space: normal;
+}
+
+.divergencia__responsavel {
+  font-size: 11px;
+  color: var(--text-soft);
+}
+
 .tag-problema {
   display: inline-flex;
   align-items: center;
@@ -2439,6 +2803,7 @@ table.data tfoot td {
 .grupo__totais {
   margin-left: auto;
   display: flex;
+  align-items: center;
   gap: 18px;
   flex-wrap: wrap;
 }
@@ -2539,6 +2904,40 @@ table.data tfoot td {
   display: flex;
   gap: 6px;
   justify-content: center;
+}
+
+th.check,
+td.check {
+  width: 36px;
+  text-align: center;
+  padding-left: 10px !important;
+  padding-right: 4px !important;
+}
+
+.carga-check {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.carga-check:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+th.check .carga-check {
+  accent-color: #fff;
+  filter: invert(1) hue-rotate(180deg);
+}
+
+tr.is-marcada > td {
+  background: #f3eefc !important;
+}
+
+tr.is-marcada:hover > td {
+  background: #ebe3f8 !important;
 }
 
 /* input inline usado nas perguntas do bloco 2 */

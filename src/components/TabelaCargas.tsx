@@ -1,17 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useT } from '../i18n'
 import { Modal, Panel } from './ui'
-import { IconAlerta, IconEditar, IconFotos, IconLixeira, IconMais, IconUpload } from './icons'
+import {
+  IconAlerta,
+  IconEditar,
+  IconFotos,
+  IconLixeira,
+  IconMais,
+  IconMigrar,
+  IconUpload,
+} from './icons'
 import EditarCarga, { criarCargaVazia } from './EditarCarga'
 import ImportarCargas from './ImportarCargas'
 import { CORES_CLASSIFICACAO } from '../data/mock'
 import {
   adicionarCargas,
+  usePodeEditarVisita,
   excluirCarga,
   gruposDeRateio,
+  migrarCargas,
   percentualDesconto,
   salvarCarga,
 } from '../store'
 import type { Carga, GrupoRateio, Visita } from '../types'
+import { campoNaoInformado } from '../types'
 import { severidadeDaCarga, type Alerta } from '../analise'
 import { fmtKg, fmtPct } from '../format'
 
@@ -36,18 +48,34 @@ export default function TabelaCargas({
   /** alertas da análise indexados por carga, para pintar as linhas */
   problemas?: Map<string, Alerta[]>
 }) {
+  const t = useT()
+  const podeEditar = usePodeEditarVisita()
   const [editando, setEditando] = useState<Carga | null>(null)
   const [importando, setImportando] = useState(false)
   const [excluindo, setExcluindo] = useState<Carga | null>(null)
+  const [marcadas, setMarcadas] = useState<Set<string>>(() => new Set())
   const linhaFoco = useRef<HTMLTableRowElement | null>(null)
+
+  const destinoAcompanhada = !acompanhada
+  const destinoLabel = t(destinoAcompanhada ? 'acompanhadas' : 'não acompanhadas')
+  const rotuloMover = t(
+    destinoAcompanhada ? 'Mover para acompanhadas' : 'Mover para não acompanhadas',
+  )
+
+  // o callback chega inline do pai, com identidade nova a cada render; guardar
+  // em ref mantém o efeito abaixo preso só ao foco
+  const consumirFoco = useRef(onFocoConsumido)
+  useEffect(() => {
+    consumirFoco.current = onFocoConsumido
+  })
 
   // ao chegar pela análise, rola até a carga e mantém o realce por alguns segundos
   useEffect(() => {
     if (!foco) return
     linhaFoco.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    const t = setTimeout(() => onFocoConsumido?.(), 6000)
-    return () => clearTimeout(t)
-  }, [foco, onFocoConsumido])
+    const timeout = setTimeout(() => consumirFoco.current?.(), 6000)
+    return () => clearTimeout(timeout)
+  }, [foco])
 
   const cargas = useMemo(
     () => visita.cargas.filter((c) => c.acompanhada === acompanhada),
@@ -75,7 +103,17 @@ export default function TabelaCargas({
   const totalDesconto = cargas.reduce((s, c) => s + c.pesoComDesconto, 0)
   const pctMedio = totalLiquido ? ((totalLiquido - totalDesconto) / totalLiquido) * 100 : 0
 
-  const proximoGrupo = `RT-${visita.cod}-${String(todosGrupos.length + 1).padStart(2, '0')}`
+  /**
+   * id do próximo grupo a partir do maior sufixo já usado — pela contagem ele
+   * colidiria com um grupo existente sempre que outro tivesse sido dissolvido.
+   */
+  const proximoGrupo = useMemo(() => {
+    const maior = todosGrupos.reduce((max, g) => {
+      const n = Number(g.id.split('-').pop())
+      return Number.isFinite(n) ? Math.max(max, n) : max
+    }, 0)
+    return `RT-${visita.cod}-${String(maior + 1).padStart(2, '0')}`
+  }, [todosGrupos, visita.cod])
 
   function salvar(c: Carga) {
     salvarCarga(visita.cod, c)
@@ -99,6 +137,37 @@ export default function TabelaCargas({
     setExcluindo(null)
   }
 
+  function alternar(id: string) {
+    setMarcadas((atual) => {
+      const next = new Set(atual)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function alternarVarias(ids: string[]) {
+    setMarcadas((atual) => {
+      const next = new Set(atual)
+      const todos = ids.length > 0 && ids.every((id) => next.has(id))
+      if (todos) ids.forEach((id) => next.delete(id))
+      else ids.forEach((id) => next.add(id))
+      return next
+    })
+  }
+
+  function confirmarMigracao() {
+    const ids = [...marcadas]
+    if (!ids.length) return
+    migrarCargas(visita.cod, ids, destinoAcompanhada)
+    onAviso(
+      ids.length === 1
+        ? `Carga ${ids[0]} movida para cargas ${destinoLabel}.`
+        : `${ids.length} cargas movidas para ${destinoLabel}.`,
+    )
+    setMarcadas(new Set())
+  }
+
   const acoes = (c: Carga) => (
     <div className="carga-acoes">
       <button
@@ -113,7 +182,8 @@ export default function TabelaCargas({
       <button
         className="btn btn--ghost btn--sm btn--icon"
         type="button"
-        title="Editar carga"
+        title={podeEditar ? 'Editar carga' : 'Seu perfil abre a visita em leitura'}
+        disabled={!podeEditar}
         onClick={() => setEditando(c)}
       >
         <IconEditar />
@@ -121,7 +191,8 @@ export default function TabelaCargas({
       <button
         className="btn btn--danger btn--sm btn--icon"
         type="button"
-        title="Excluir carga"
+        title={podeEditar ? 'Excluir carga' : 'Seu perfil abre a visita em leitura'}
+        disabled={!podeEditar}
         onClick={() => setExcluindo(c)}
       >
         <IconLixeira />
@@ -131,10 +202,12 @@ export default function TabelaCargas({
 
   const colunaPeso = (c: Carga) => {
     const pct = percentualDesconto(c)
+    const ni = (campo: 'pesoLiquido' | 'pesoComDesconto') =>
+      campoNaoInformado(c, campo) ? <span className="cell-ni">Não informado</span> : fmtKg(c[campo])
     return (
       <>
-        <td className="num">{fmtKg(c.pesoLiquido)}</td>
-        <td className="num">{fmtKg(c.pesoComDesconto)}</td>
+        <td className="num">{ni('pesoLiquido')}</td>
+        <td className="num">{ni('pesoComDesconto')}</td>
         <td className="num">
           <span className="pct" title={`Diferença: ${fmtKg(c.pesoLiquido - c.pesoComDesconto)}`}>
             {fmtPct(pct)}
@@ -172,7 +245,11 @@ export default function TabelaCargas({
   /** classes de destaque da linha: foco da análise + severidade do problema */
   const classeLinha = (c: Carga) => {
     const sev = severidadeDaCarga(problemas?.get(c.id))
-    return [foco === c.id ? 'is-foco' : null, sev ? `row-${sev}` : null]
+    return [
+      foco === c.id ? 'is-foco' : null,
+      marcadas.has(c.id) ? 'is-marcada' : null,
+      sev ? `row-${sev}` : null,
+    ]
       .filter(Boolean)
       .join(' ') || undefined
   }
@@ -187,6 +264,22 @@ export default function TabelaCargas({
             <button
               className="btn btn--ghost btn--sm"
               type="button"
+              disabled={!podeEditar || marcadas.size === 0}
+              title={
+                !podeEditar
+                  ? 'Seu perfil abre a visita em leitura'
+                  : marcadas.size === 0
+                    ? 'Marque as cargas ao lado para mover'
+                    : rotuloMover
+              }
+              onClick={confirmarMigracao}
+            >
+              <IconMigrar /> {marcadas.size > 0 ? `${rotuloMover} (${marcadas.size})` : rotuloMover}
+            </button>
+            <button
+              className="btn btn--ghost btn--sm"
+              type="button"
+              disabled={!podeEditar}
               onClick={() => setImportando(true)}
             >
               <IconUpload /> Importar planilha
@@ -194,6 +287,7 @@ export default function TabelaCargas({
             <button
               className="btn btn--primary btn--sm"
               type="button"
+              disabled={!podeEditar}
               onClick={() => setEditando({ ...criarCargaVazia(visita.data), acompanhada })}
             >
               <IconMais /> Nova carga
@@ -247,6 +341,24 @@ export default function TabelaCargas({
                 <table className="data data--cargas">
                   <thead>
                     <tr>
+                      <th className="check">
+                        <input
+                          className="carga-check"
+                          type="checkbox"
+                          disabled={!podeEditar}
+                          checked={
+                            avulsas.length > 0 && avulsas.every((c) => marcadas.has(c.id))
+                          }
+                          ref={(el) => {
+                            if (!el) return
+                            const alguma = avulsas.some((c) => marcadas.has(c.id))
+                            const todas = avulsas.every((c) => marcadas.has(c.id))
+                            el.indeterminate = alguma && !todas
+                          }}
+                          onChange={() => alternarVarias(avulsas.map((c) => c.id))}
+                          aria-label={t('Marcar todas')}
+                        />
+                      </th>
                       <th>ID</th>
                       <th>Data / hora</th>
                       <th>Placa</th>
@@ -267,20 +379,56 @@ export default function TabelaCargas({
                         ref={foco === c.id ? linhaFoco : undefined}
                         className={classeLinha(c)}
                       >
-                        <td className="mono">{c.id}</td>
+                        <td className="check">
+                          <input
+                            className="carga-check"
+                            type="checkbox"
+                            disabled={!podeEditar}
+                            checked={marcadas.has(c.id)}
+                            onChange={() => alternar(c.id)}
+                            aria-label={`${t('Mover')} ${c.id}`}
+                          />
+                        </td>
+                        <td className="mono cell-id">{c.id}</td>
                         <td>
                           <div className="mono">{c.data}</div>
                           <div className="cell-muted mono">{c.hora}</div>
                         </td>
                         <td>
-                          <span className="placa">{c.placa}</span>
+                          <span className="placa">
+                            {campoNaoInformado(c, 'placa') ? (
+                              <span className="cell-ni">Não informado</span>
+                            ) : (
+                              c.placa
+                            )}
+                          </span>
                         </td>
                         <td>
-                          <div className="produtor">{c.produtor}</div>
-                          <div className="cell-muted mono">{c.cpfCnpjProdutor}</div>
+                          <div className="produtor">
+                            {campoNaoInformado(c, 'produtor') ? (
+                              <span className="cell-ni">Não informado</span>
+                            ) : (
+                              c.produtor
+                            )}
+                          </div>
+                          <div className="cell-muted mono">
+                            {campoNaoInformado(c, 'cpfCnpjProdutor') ? (
+                              <span className="cell-ni">Não informado</span>
+                            ) : (
+                              c.cpfCnpjProdutor
+                            )}
+                          </div>
                         </td>
                         <td className="mono">
-                          {c.romaneio || <span className="cell-muted">—</span>}
+                          {campoNaoInformado(c, 'romaneio') || !c.romaneio ? (
+                            campoNaoInformado(c, 'romaneio') ? (
+                              <span className="cell-ni">Não informado</span>
+                            ) : (
+                              <span className="cell-muted">—</span>
+                            )
+                          ) : (
+                            c.romaneio
+                          )}
                         </td>
                         {colunaPeso(c)}
                         <td>
@@ -326,6 +474,10 @@ export default function TabelaCargas({
                     foco={foco}
                     refFoco={linhaFoco}
                     classeLinha={classeLinha}
+                    podeEditar={podeEditar}
+                    marcadas={marcadas}
+                    onAlternar={alternar}
+                    onAlternarGrupo={() => alternarVarias(g.cargas.map((c) => c.id))}
                   />
                 ))}
               </div>
@@ -413,6 +565,10 @@ function CardGrupo({
   foco,
   refFoco,
   classeLinha,
+  podeEditar,
+  marcadas,
+  onAlternar,
+  onAlternarGrupo,
 }: {
   grupo: GrupoRateio
   colunaPeso: (c: Carga) => React.ReactNode
@@ -421,12 +577,30 @@ function CardGrupo({
   foco?: string | null
   refFoco: React.RefObject<HTMLTableRowElement | null>
   classeLinha: (c: Carga) => string | undefined
+  podeEditar: boolean
+  marcadas: Set<string>
+  onAlternar: (id: string) => void
+  onAlternarGrupo: () => void
 }) {
   const cor = CORES_CLASSIFICACAO[grupo.classificacao]
+  const ids = grupo.cargas.map((c) => c.id)
+  const todasMarcadas = ids.length > 0 && ids.every((id) => marcadas.has(id))
+  const algumaMarcada = ids.some((id) => marcadas.has(id))
 
   return (
     <article className="grupo">
       <header className="grupo__head">
+        <input
+          className="carga-check"
+          type="checkbox"
+          disabled={!podeEditar}
+          checked={todasMarcadas}
+          ref={(el) => {
+            if (el) el.indeterminate = algumaMarcada && !todasMarcadas
+          }}
+          onChange={onAlternarGrupo}
+          aria-label={`Selecionar grupo ${grupo.id}`}
+        />
         <span className="grupo__id">⛓ {grupo.id}</span>
         <span className="placa placa--grupo">{grupo.placa}</span>
         <span className="grupo__meta mono">
@@ -456,6 +630,7 @@ function CardGrupo({
         <table className="data data--cargas data--aninhada">
           <thead>
             <tr>
+              <th className="check" />
               <th>ID</th>
               <th>Data / hora</th>
               <th>Placa</th>
@@ -475,19 +650,57 @@ function CardGrupo({
                 ref={foco === c.id ? refFoco : undefined}
                 className={classeLinha(c)}
               >
-                <td className="mono">{c.id}</td>
+                <td className="check">
+                  <input
+                    className="carga-check"
+                    type="checkbox"
+                    disabled={!podeEditar}
+                    checked={marcadas.has(c.id)}
+                    onChange={() => onAlternar(c.id)}
+                    aria-label={`Selecionar ${c.id}`}
+                  />
+                </td>
+                <td className="mono cell-id">{c.id}</td>
                 <td>
                   <div className="mono">{c.data}</div>
                   <div className="cell-muted mono">{c.hora}</div>
                 </td>
                 <td>
-                  <span className="placa">{c.placa}</span>
+                  <span className="placa">
+                    {campoNaoInformado(c, 'placa') ? (
+                      <span className="cell-ni">Não informado</span>
+                    ) : (
+                      c.placa
+                    )}
+                  </span>
                 </td>
                 <td>
-                  <div className="produtor">{c.produtor}</div>
-                  <div className="cell-muted mono">{c.cpfCnpjProdutor}</div>
+                  <div className="produtor">
+                    {campoNaoInformado(c, 'produtor') ? (
+                      <span className="cell-ni">Não informado</span>
+                    ) : (
+                      c.produtor
+                    )}
+                  </div>
+                  <div className="cell-muted mono">
+                    {campoNaoInformado(c, 'cpfCnpjProdutor') ? (
+                      <span className="cell-ni">Não informado</span>
+                    ) : (
+                      c.cpfCnpjProdutor
+                    )}
+                  </div>
                 </td>
-                <td className="mono">{c.romaneio || <span className="cell-muted">—</span>}</td>
+                <td className="mono">
+                  {campoNaoInformado(c, 'romaneio') || !c.romaneio ? (
+                    campoNaoInformado(c, 'romaneio') ? (
+                      <span className="cell-ni">Não informado</span>
+                    ) : (
+                      <span className="cell-muted">—</span>
+                    )
+                  ) : (
+                    c.romaneio
+                  )}
+                </td>
                 {colunaPeso(c)}
                 <td className="obs">
                   {marcador(c)}
@@ -499,7 +712,7 @@ function CardGrupo({
           </tbody>
           <tfoot>
             <tr>
-              <td colSpan={5} className="grupo__foot-label">
+              <td colSpan={6} className="grupo__foot-label">
                 Total do grupo
               </td>
               <td className="num cell-strong">{fmtKg(grupo.pesoLiquidoTotal)}</td>

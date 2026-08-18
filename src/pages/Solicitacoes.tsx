@@ -4,6 +4,7 @@ import { Breadcrumb, Modal, PageHead } from '../components/ui'
 import { IconAlerta, IconAnexo, IconChat, IconLixeira, IconLupa, IconMais } from '../components/icons'
 import { OPCOES } from '../data/mock'
 import {
+  obterUsuarioLogado,
   adicionarParticipante,
   criarAnexo,
   criarSolicitacao,
@@ -12,7 +13,7 @@ import {
   moverSolicitacao,
   useSolicitacoes,
 } from '../store'
-import { USUARIO, corDoNome, iniciais } from '../usuario'
+import { corDoNome, iniciais } from '../usuario'
 import { fmtDataHora } from '../format'
 import type {
   AnexoArquivo,
@@ -39,7 +40,7 @@ function useEquipe(): string[] {
   return useMemo(
     () =>
       [
-        USUARIO.nome,
+        obterUsuarioLogado().nome,
         ...OPCOES.consultores,
         ...OPCOES.lideres,
         ...OPCOES.lideresFocais,
@@ -61,9 +62,10 @@ function normalizar(v: string): string {
   return v.toLowerCase().normalize('NFD').replace(SINAIS_DIACRITICOS, '')
 }
 
-/** quem abriu o pedido, ou a "administração" (Central de Informações) pode excluir */
+/** quem abriu o pedido, ou quem administra o sistema, pode excluir */
 function podeExcluir(s: Solicitacao): boolean {
-  return s.solicitante === USUARIO.nome || USUARIO.papel === 'Central de Informações'
+  const usuario = obterUsuarioLogado()
+  return s.solicitante === usuario.nome || usuario.perfil === 'Admin'
 }
 
 function corresponde(s: Solicitacao, termo: string): boolean {
@@ -95,7 +97,7 @@ export default function Solicitacoes() {
   const visiveis = useMemo(() => {
     const base = apenasMinhas
       ? solicitacoes.filter(
-          (s) => s.solicitante === USUARIO.nome || s.participantes.includes(USUARIO.nome),
+          (s) => s.solicitante === obterUsuarioLogado().nome || s.participantes.includes(obterUsuarioLogado().nome),
         )
       : solicitacoes
     return base.filter((s) => corresponde(s, busca))
@@ -105,7 +107,7 @@ export default function Solicitacoes() {
 
   const porStatus = (status: StatusSolicitacao) => visiveis.filter((s) => s.status === status)
   const devolutivasProntas = solicitacoes.filter(
-    (s) => s.status === 'feito' && s.solicitante === USUARIO.nome,
+    (s) => s.status === 'feito' && s.solicitante === obterUsuarioLogado().nome,
   )
 
   function soltar(e: React.DragEvent, status: StatusSolicitacao) {
@@ -279,7 +281,7 @@ function CardSolicitacao({
   onExcluir: () => void
 }) {
   const info = TIPO_INFO[s.tipo]
-  const devolutiva = s.status === 'feito' && s.solicitante === USUARIO.nome
+  const devolutiva = s.status === 'feito' && s.solicitante === obterUsuarioLogado().nome
 
   return (
     <article
@@ -367,7 +369,7 @@ function NovaSolicitacaoModal({
   const [cargaId, setCargaId] = useState('')
   const [motivo, setMotivo] = useState('')
   const [anexos, setAnexos] = useState<AnexoArquivo[]>([])
-  const [solicitante, setSolicitante] = useState(USUARIO.nome)
+  const [solicitante, setSolicitante] = useState(obterUsuarioLogado().nome)
   const inputRef = useRef<HTMLInputElement>(null)
 
   function adicionarArquivos(files: FileList | null) {
@@ -693,7 +695,7 @@ function ListaMensagensSolicitacao({ mensagens }: { mensagens: MensagemSolicitac
         <div className="conversa__vazio">Nenhuma mensagem ainda. Comece a conversa abaixo.</div>
       )}
       {mensagens.map((m) => (
-        <article className={`msg${m.autor === USUARIO.nome ? ' msg--propria' : ''}`} key={m.id}>
+        <article className={`msg${m.autor === obterUsuarioLogado().nome ? ' msg--propria' : ''}`} key={m.id}>
           <div className="msg__avatar" style={{ background: corDoNome(m.autor) }}>
             {iniciais(m.autor)}
           </div>
@@ -742,15 +744,15 @@ function ComposerSolicitacao({ solicitacaoId }: { solicitacaoId: string }) {
 
   function enviar() {
     if (!texto.trim() && anexos.length === 0) return
-    enviarMensagemSolicitacao(solicitacaoId, USUARIO.nome, texto.trim(), anexos)
+    enviarMensagemSolicitacao(solicitacaoId, obterUsuarioLogado().nome, texto.trim(), anexos)
     setTexto('')
     setAnexos([])
   }
 
   return (
     <div className="compositor">
-      <div className="compositor__avatar" style={{ background: corDoNome(USUARIO.nome) }}>
-        {iniciais(USUARIO.nome)}
+      <div className="compositor__avatar" style={{ background: corDoNome(obterUsuarioLogado().nome) }}>
+        {iniciais(obterUsuarioLogado().nome)}
       </div>
       <div className="compositor__corpo">
         {anexos.length > 0 && (

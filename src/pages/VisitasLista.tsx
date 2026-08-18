@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useT } from '../i18n'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { OPCOES, situacaoPorId } from '../data/mock'
-import { useVisitas } from '../store'
+import { obterUsuarioLogado, useVisitas } from '../store'
 import type { SituacaoId, Visita } from '../types'
 import { Breadcrumb, PageHead, SituacaoBadge } from '../components/ui'
 import { IconAlerta, IconChat, IconDownload, IconNovaAba } from '../components/icons'
-import { USUARIO } from '../usuario'
-import { fmtNum } from '../format'
+import { fmtNum, dataComparavel, dataIsoComparavel } from '../format'
 
 type Coluna = {
   key: string
@@ -52,7 +52,7 @@ function temNovaResposta(v: Visita): boolean {
   const mensagens = v.mensagens.filter((m) => m.tipo === 'mensagem')
   if (mensagens.length === 0) return false
   const ultima = mensagens.reduce((a, b) => (a.ts > b.ts ? a : b))
-  return ultima.autor !== USUARIO.nome
+  return ultima.autor !== obterUsuarioLogado().nome
 }
 
 const FILTROS_VAZIOS = {
@@ -71,6 +71,14 @@ const POR_PAGINA = 12
 
 export default function VisitasLista() {
   const { situacao } = useParams<{ situacao: string }>()
+  /**
+   * O fluxo separa 1ª e 2ª passagem pela mesma fila, e manda a rodada no link.
+   * Sem ler isso aqui, clicar no card da 2ª abriria a lista inteira e o número
+   * da tela não bateria com o do card.
+   */
+  const [busca] = useSearchParams()
+  const t = useT()
+  const rodadaAlvo = Number(busca.get('rodada')) || null
   const situacaoId = situacao as SituacaoId
   const meta = situacaoPorId(situacaoId)
 
@@ -84,15 +92,22 @@ export default function VisitasLista() {
 
   const visitas = useVisitas()
   const base = useMemo(
-    () => visitas.filter((v) => v.situacao === situacaoId),
-    [visitas, situacaoId],
+    () =>
+      visitas.filter(
+        (v) =>
+          v.situacao === situacaoId &&
+          (!rodadaAlvo || (rodadaAlvo >= 2 ? v.rodada >= 2 : v.rodada <= 1)),
+      ),
+    [visitas, situacaoId, rodadaAlvo],
   )
   const atrasadas = useMemo(() => base.filter(estaAtrasada), [base])
   const comResposta = useMemo(() => base.filter(temNovaResposta), [base])
 
   const filtradas = useMemo(() => {
-    const deTs = filtros.de ? new Date(filtros.de).getTime() : null
-    const ateTs = filtros.ate ? new Date(filtros.ate).getTime() : null
+    // comparação por número (20260625), sem Date: o input é UTC e a data da
+    // visita é local, e a diferença de fuso excluía o último dia do intervalo
+    const de = filtros.de ? dataIsoComparavel(filtros.de) : null
+    const ate = filtros.ate ? dataIsoComparavel(filtros.ate) : null
 
     return base.filter((v) => {
       if (filtros.codigo && !String(v.cod).includes(filtros.codigo.trim())) return false
@@ -105,9 +120,9 @@ export default function VisitasLista() {
         )
           return false
       }
-      const ts = paraTimestamp(v.data)
-      if (deTs !== null && ts < deTs) return false
-      if (ateTs !== null && ts > ateTs) return false
+      const dia = dataComparavel(v.data)
+      if (de !== null && dia < de) return false
+      if (ate !== null && dia > ate) return false
       if (filtros.consultor && v.consultor !== filtros.consultor) return false
       if (filtros.lider && v.lider !== filtros.lider) return false
       if (filtros.liderFocal && v.liderFocal !== filtros.liderFocal) return false
@@ -160,13 +175,13 @@ export default function VisitasLista() {
     <main className="page">
       <Breadcrumb
         trilha={[
-          { label: 'Início', to: '/visitas' },
-          { label: 'Visitas', to: '/visitas' },
-          { label: meta.label },
+          { label: t('Início'), to: '/visitas' },
+          { label: t('Visitas'), to: '/visitas' },
+          { label: t(meta.label) },
         ]}
       />
       <PageHead
-        titulo={`Visitas ${meta.label}`}
+        titulo={`${t('Visitas')} ${t(meta.label)}`}
         subtitulo={meta.descricao}
         acoes={
           <>
@@ -174,7 +189,7 @@ export default function VisitasLista() {
               ← Voltar
             </Link>
             <button className="btn btn--primary" type="button" onClick={() => exportarCsv(ordenadas, meta.label)}>
-              <IconDownload /> Exportar CSV
+              <IconDownload /> {t('Exportar CSV')}
             </button>
           </>
         }
@@ -201,7 +216,7 @@ export default function VisitasLista() {
             />
           </div>
           <div className="field">
-            <label htmlFor="f-de">Data (de)</label>
+            <label htmlFor="f-de">{t('Data (de)')}</label>
             <input
               id="f-de"
               type="date"
@@ -210,7 +225,7 @@ export default function VisitasLista() {
             />
           </div>
           <div className="field">
-            <label htmlFor="f-ate">Data (até)</label>
+            <label htmlFor="f-ate">{t('Data (até)')}</label>
             <input
               id="f-ate"
               type="date"
@@ -219,7 +234,7 @@ export default function VisitasLista() {
             />
           </div>
           <div className="field">
-            <label htmlFor="f-regiao">Região</label>
+            <label htmlFor="f-regiao">{t('Região')}</label>
             <select
               id="f-regiao"
               value={form.regiao}
@@ -287,7 +302,7 @@ export default function VisitasLista() {
 
         <div className="filters__actions">
           <button className="btn btn--primary" onClick={pesquisar} type="button">
-            Pesquisar
+            {t('Pesquisar')}
           </button>
           <button className="btn btn--ghost" onClick={limpar} type="button">
             Limpar
@@ -319,7 +334,7 @@ export default function VisitasLista() {
                     className={c.ordenavel ? 'sortable' : undefined}
                     onClick={c.ordenavel ? () => ordenarPor(c.key) : undefined}
                   >
-                    {c.label}
+                    {t(c.label)}
                     {c.ordenavel && (
                       <span className="arrow">
                         {ordem.key === c.key ? (ordem.dir === 'asc' ? '▲' : '▼') : '⇅'}
@@ -327,7 +342,7 @@ export default function VisitasLista() {
                     )}
                   </th>
                 ))}
-                <th>Ações</th>
+                <th>{t('Ações')}</th>
               </tr>
             </thead>
             <tbody>

@@ -15,9 +15,11 @@ import type {
   Situacao,
   SituacaoId,
   Solicitacao,
+  Usuario,
   Visita,
 } from '../types'
 import { CLASSIFICACOES, ORIGENS_ACUMULADO } from '../types'
+import { mascaraProdutor } from '../format'
 
 /* ------------------------------------------------------------------ *
  * PRNG determinístico — os dados fictícios precisam ser sempre iguais
@@ -334,11 +336,11 @@ function gerarCargas(cod: number, dataBase: Date, qtdAcomp: number, qtdNao: numb
   return cargas
 }
 
-function gerarDadosVisita(temCargas: boolean, cancelada: boolean): DadosVisita {
+function gerarDadosVisita(temCargas: boolean, cancelada: boolean, temAcompanhadas: boolean): DadosVisita {
   const reteste = !cancelada && rnd() > 0.75 ? 'Sim' : 'Não'
   return {
     visitaIniciada: temCargas ? 'Sim' : cancelada ? 'Não' : simNao(0.85),
-    recebimentoCargas: temCargas ? 'Sim' : 'Não',
+    recebimentoCargas: temAcompanhadas ? 'Sim' : 'Não',
     realizouTestes: temCargas ? simNao(0.9) : 'Não',
     houveReteste: reteste,
     retesteSolicitante: reteste === 'Sim' ? pick(SOLICITANTES_RETESTE) : '',
@@ -354,11 +356,13 @@ function gerarAcumulado(): Acumulado {
   return {
     informadoPeloPdr: origem === 'PDR' ? simNao(0.7) : 'Não',
     origem,
+    // em kg, na mesma ordem de grandeza da série histórica da unidade: o que o
+    // PDR informa na visita é o acumulado dele, não o movimento do dia
     valores: {
-      Negativa: int(500, 24000),
-      Declarada: int(500, 24000),
-      Positiva: int(500, 24000),
-      Participante: int(500, 24000),
+      Negativa: int(500, 24000) * 1000,
+      Declarada: int(500, 24000) * 1000,
+      Positiva: int(500, 24000) * 1000,
+      Participante: int(500, 24000) * 1000,
     },
   }
 }
@@ -433,7 +437,9 @@ function gerarMensagens(cod: number, dataVisita: Date, visita: Pick<Visita, 'con
 
   const mensagens: Mensagem[] = []
   let hora = int(8, 11)
-  let minuto = int(0, 55)
+  // o minuto é sorteado de novo a cada mensagem, mas o gerador é determinístico
+  // pela seed: descartar esta chamada deslocaria a sequência e mudaria a base inteira
+  void int(0, 55)
   let dia = 1
 
   for (let i = 0; i < qtd; i++) {
@@ -457,7 +463,7 @@ function gerarMensagens(cod: number, dataVisita: Date, visita: Pick<Visita, 'con
       hora = int(8, 11)
       dia += 1
     }
-    minuto = int(0, 59)
+    const minuto = int(0, 59)
 
     mensagens.push({
       id: `MSG-${cod}-${i + 1}`,
@@ -495,12 +501,46 @@ function gerarMensagens(cod: number, dataVisita: Date, visita: Pick<Visita, 'con
 /* ------------------------------------------------------------------ *
  * Base de visitas
  * ------------------------------------------------------------------ */
+/**
+ * Quantidade de unidades no campo. Bem menor que o número de visitas, porque
+ * um PDR é visitado várias vezes na safra — é essa repetição que dá histórico
+ * à unidade e permite ir de um dia do Dia Anterior até a visita daquele dia.
+ */
+const TOTAL_PDRS = 55
+
+/**
+ * Monta pares (unidade, dia) antes de gerar as visitas. Cada unidade ganha uma
+ * sequência de dias distintos e próximos entre si, como uma frente de trabalho
+ * que passa pelo mesmo ponto de recebimento algumas vezes seguidas.
+ */
+function gerarAgenda(total: number): { pdr: Pdr; data: Date }[] {
+  const unidades = Array.from({ length: TOTAL_PDRS }, () => gerarPdr())
+  const agenda: { pdr: Pdr; data: Date }[] = []
+
+  for (let u = 0; agenda.length < total; u++) {
+    const pdr = unidades[u % TOTAL_PDRS]
+    // âncora espalhada pela safra; as visitas da unidade caem nos dias antes dela
+    const ancora = new Date(HOJE.getTime() - int(0, 150) * 86400000)
+    const quantas = Math.min(int(3, 6), total - agenda.length)
+
+    let passo = 0
+    for (let k = 0; k < quantas; k++) {
+      // sempre avança pelo menos um dia: a unidade não tem duas visitas no mesmo dia
+      passo += int(1, 4)
+      agenda.push({ pdr, data: new Date(ancora.getTime() - passo * 86400000) })
+    }
+  }
+
+  return agenda
+}
+
 function gerarVisitas(total: number): Visita[] {
   const visitas: Visita[] = []
+  const agenda = gerarAgenda(total)
 
   for (let i = 0; i < total; i++) {
     const cod = 295428 + i
-    const dataVisita = new Date(2026, int(0, 7), int(1, 28))
+    const { pdr: pdrDaVisita, data: dataVisita } = agenda[i]
     const envio = new Date(dataVisita.getTime() + int(1, 6) * 86400000)
 
     const r = rnd()
@@ -520,7 +560,11 @@ function gerarVisitas(total: number): Visita[] {
 
     const cargas = cancelada ? [] : gerarCargas(cod, dataVisita, int(3, 10), int(0, 5))
     const ocorrencias = gerarOcorrencias(cod, formatarData(dataVisita), cargas)
-    const dadosVisita = gerarDadosVisita(cargas.length > 0, cancelada)
+    const dadosVisita = gerarDadosVisita(
+      cargas.length > 0,
+      cancelada,
+      cargas.some((c) => c.acompanhada),
+    )
     dadosVisita.houveOcorrencia = ocorrencias.length > 0 ? 'Sim' : 'Não'
 
     const consultor = pick(CONSULTORES)
@@ -531,9 +575,12 @@ function gerarVisitas(total: number): Visita[] {
       cod,
       data: formatarData(dataVisita),
       envioTablet: formatarData(envio),
-      pdr: gerarPdr(),
+      pdr: pdrDaVisita,
       numeroVisitas: int(1, 96),
       situacao,
+      // a base de demonstração já traz visitas na 2ª passagem, para o fluxo
+      // mostrar as quatro etapas com conteúdo
+      rodada: situacao === 'central-correcao' || situacao === 'operacao-correcao' ? (cod % 3 === 0 ? 2 : 1) : 1,
       consultor,
       lider,
       liderFocal: pick(LIDERES_FOCAIS),
@@ -548,6 +595,9 @@ function gerarVisitas(total: number): Visita[] {
       cincoEstrelas: rnd() > 0.88,
       dadosVisita,
       acumulado: gerarAcumulado(),
+      // a tabela do Dia Anterior é derivada do histórico da unidade; aqui fica
+      // só o que o auditor efetivamente lançar
+      diaAnterior: [],
       procedimentos: gerarProcedimentos(),
       historico: gerarHistorico(),
       cargas,
@@ -597,6 +647,7 @@ const VISITA_TESTE_MUNICIPIO_PAULISTA: Visita = {
   },
   numeroVisitas: 1,
   situacao: 'certificada',
+  rodada: 1,
   consultor: 'INSERÇÃO_AUTO',
   lider: 'INSERÇÃO_AUTO',
   liderFocal: 'INSERÇÃO_AUTO',
@@ -625,6 +676,7 @@ const VISITA_TESTE_MUNICIPIO_PAULISTA: Visita = {
     origem: 'PDR',
     valores: { Negativa: 4000, Declarada: 6000, Positiva: 10000, Participante: 2000 },
   },
+  diaAnterior: [],
   procedimentos: [],
   historico: [],
   cargas: [],
@@ -656,7 +708,15 @@ const NOMES_MES = [
  * Determinístico a partir do próprio CNPJ para que a mesma unidade
  * apresente sempre o mesmo histórico.
  */
-export function historicoAcumuladoPorCnpj(cnpj: string): HistoricoAcumulado {
+/**
+ * Série da unidade terminando na data de referência — normalmente a data da
+ * visita, para que a primeira linha seja o dia que está sendo auditado. Sem
+ * isso, uma visita de março mostrava dias de agosto, posteriores a ela.
+ */
+export function historicoAcumuladoPorCnpj(
+  cnpj: string,
+  ate: Date = HOJE,
+): HistoricoAcumulado {
   const seed = cnpj.split('').reduce((s, c) => s + c.charCodeAt(0), 0)
   const r = criarRandom(seed * 7919)
   const n = (min: number, max: number) => Math.floor(r() * (max - min + 1)) + min
@@ -705,21 +765,23 @@ export function historicoAcumuladoPorCnpj(cnpj: string): HistoricoAcumulado {
     return crono.reverse() // exibição: mais recente primeiro
   }
 
+  // a série é gerada em kg, a mesma unidade do acumulado digitado na visita —
+  // ter tonelada de um lado e quilo do outro obrigava a converter em cada regra
   const dias = serie(
     14,
-    (p) => formatarData(new Date(HOJE.getTime() - p * 86400000)),
-    () => n(2000, 9000),
-    () => n(120, 1400),
+    (p) => formatarData(new Date(ate.getFullYear(), ate.getMonth(), ate.getDate() - p)),
+    () => n(2000, 9000) * 1000,
+    () => n(120, 1400) * 1000,
   )
 
   const meses = serie(
     8,
     (p) => {
-      const d = new Date(HOJE.getFullYear(), HOJE.getMonth() - p, 1)
+      const d = new Date(ate.getFullYear(), ate.getMonth() - p, 1)
       return `${NOMES_MES[d.getMonth()]}/${d.getFullYear()}`
     },
-    () => n(8000, 26000),
-    () => n(1500, 9000),
+    () => n(8000, 26000) * 1000,
+    () => n(1500, 9000) * 1000,
   )
 
   return { dias, meses }
@@ -738,14 +800,77 @@ export function proximoIdCarga(): string {
   return String(++sequenciaCarga)
 }
 
+/**
+ * Empurra a sequência para além de um id que já existe. Necessário porque o
+ * contador reinicia a cada carga da página: sem isto, cargas restauradas do
+ * storage teriam seus ids reemitidos, e salvarCarga — que casa por id —
+ * sobrescreveria a carga errada.
+ */
+export function reservarIdCarga(id: string) {
+  const n = Number(id)
+  if (Number.isFinite(n) && n > sequenciaCarga) sequenciaCarga = n
+}
+
 /* ------------------------------------------------------------------ *
  * Catálogo de PDRs pré-cadastrados
  * ------------------------------------------------------------------ */
-export const PDRS_CATALOGO_INICIAIS: PdrCatalogo[] = [
-  { nome: 'PDR ALEGRETE', cnpj: '02.595.222/0005-53', cidade: 'ALEGRETE', uf: 'RS' },
-  { nome: 'PDR ROSARIO DO SUL I', cnpj: '88.879.473/0001-51', cidade: 'ROSARIO DO SUL', uf: 'RS' },
-  { nome: 'PDR ROSARIO DO SUL II', cnpj: '21.018.500/0002-01', cidade: 'ROSARIO DO SUL', uf: 'RS' },
-  { nome: 'PDR ROSARIO DO SUL III', cnpj: '05.034.045/0001-09', cidade: 'ROSARIO DO SUL', uf: 'RS' },
+/**
+ * Unidades escritas à mão. Existem porque o modelo de planilha da importação
+ * de acumulado referencia estes CNPJs — apagá-las quebraria aquele exemplo.
+ */
+const PDRS_FIXOS: Omit<PdrCatalogo, 'id'>[] = [
+  { nome: 'PDR ALEGRETE', cnpj: '02.595.222/0005-53', cidade: 'ALEGRETE', uf: 'RS', situacao: 'Ativo' },
+  { nome: 'PDR ROSARIO DO SUL I', cnpj: '88.879.473/0001-51', cidade: 'ROSARIO DO SUL', uf: 'RS', situacao: 'Ativo' },
+  { nome: 'PDR ROSARIO DO SUL II', cnpj: '21.018.500/0002-01', cidade: 'ROSARIO DO SUL', uf: 'RS', situacao: 'Ativo' },
+  { nome: 'PDR ROSARIO DO SUL III', cnpj: '05.034.045/0001-09', cidade: 'ROSARIO DO SUL', uf: 'RS', situacao: 'Inativo' },
+]
+
+/**
+ * O cadastro nasce com as unidades que as visitas de fato referenciam. Sem
+ * isso a Administração mostrava 4 PDRs enquanto o sistema operava com dezenas,
+ * e o cadastro não servia para nada: nenhuma visita apontava para ele.
+ *
+ * A unidade visitada entra como Ativa — se está recebendo visita, está em
+ * operação. Só as escritas à mão trazem situação própria.
+ */
+export const PDRS_CATALOGO_INICIAIS: PdrCatalogo[] = (() => {
+  const porCnpj = new Map<string, Omit<PdrCatalogo, 'id'>>()
+
+  for (const p of PDRS_FIXOS) porCnpj.set(p.cnpj, p)
+
+  for (const v of VISITAS_INICIAIS) {
+    if (porCnpj.has(v.pdr.cnpj)) continue
+    // mesma máscara do cadastro manual e da importação, senão o catálogo
+    // mistura "ALEGRETE" com "Paragominas"
+    porCnpj.set(v.pdr.cnpj, {
+      nome: mascaraProdutor(v.pdr.nome),
+      cnpj: v.pdr.cnpj,
+      cidade: mascaraProdutor(v.pdr.cidade),
+      uf: v.pdr.uf,
+      situacao: 'Ativo',
+    })
+  }
+
+  return [...porCnpj.values()].map((p, i) => ({ ...p, id: String(100000001 + i) }))
+})()
+
+/* ------------------------------------------------------------------ *
+ * Usuários — um por perfil, para dar pra testar o acesso de cada um
+ * ------------------------------------------------------------------ */
+export const USUARIOS_INICIAIS: Usuario[] = [
+  { id: 'U-001', nome: 'Bruno de Souza Ferreira', login: 'bruno.ferreira', telefone: '(54) 99101-2233', cpf: '123.456.780-62', email: 'bruno.ferreira@qima.com', perfil: 'Information Analyst', situacao: 'Ativo' },
+  { id: 'U-002', nome: 'Clarissa Menegat', login: 'clarissa.menegat', telefone: '(51) 99202-3344', cpf: '123.456.787-39', email: 'clarissa.menegat@qima.com', perfil: 'Admin', situacao: 'Ativo' },
+  { id: 'U-003', nome: 'Helena Duarte', login: 'helena.duarte', telefone: '(11) 99303-4455', cpf: '123.456.794-68', email: 'helena.duarte@qima.com', perfil: 'Strategic Leader', situacao: 'Ativo' },
+  { id: 'U-004', nome: 'Marcos Vinicius Pires', login: 'marcos.pires', telefone: '(65) 99404-5566', cpf: '123.456.801-21', email: 'marcos.pires@qima.com', perfil: 'Operational Leader', situacao: 'Ativo' },
+  { id: 'U-005', nome: 'Renata Vasques', login: 'renata.vasques', telefone: '(62) 99505-6677', cpf: '123.456.808-06', email: 'renata.vasques@qima.com', perfil: 'Supervisor', situacao: 'Ativo' },
+  { id: 'U-006', nome: 'Cesar Monteiro', login: 'cesar.monteiro', telefone: '(41) 99606-7788', cpf: '123.456.815-27', email: 'cesar.monteiro@qima.com', perfil: 'Coordinator', situacao: 'Ativo' },
+  { id: 'U-007', nome: 'Diego Fontana', login: 'diego.fontana', telefone: '(47) 99707-8899', cpf: '123.456.822-56', email: 'diego.fontana@qima.com', perfil: 'Auditor', situacao: 'Ativo' },
+  { id: 'U-008', nome: 'Tatiane Rocha', login: 'tatiane.rocha', telefone: '(31) 99808-9900', cpf: '123.456.829-22', email: 'tatiane.rocha@qima.com', perfil: 'Operational Monitor', situacao: 'Ativo' },
+  { id: 'U-009', nome: 'Otávio Lins', login: 'otavio.lins', telefone: '(48) 99909-0011', cpf: '123.456.836-51', email: 'otavio.lins@qima.com', perfil: 'Support', situacao: 'Ativo' },
+  { id: 'U-010', nome: 'Patrícia Nogueira', login: 'patricia.nogueira', telefone: '(19) 99110-1122', cpf: '123.456.843-80', email: 'patricia.nogueira@cliente.com', perfil: 'Regional GR (Client)', situacao: 'Ativo' },
+  { id: 'U-011', nome: 'Rafael Baldin Rizzi', login: 'rafael.rizzi', telefone: '(53) 99211-2233', cpf: '123.456.850-00', email: 'rafael.rizzi@cliente.com', perfil: 'RTV (Client)', situacao: 'Ativo' },
+  { id: 'U-012', nome: 'Juliana Kramer', login: 'juliana.kramer', telefone: '(11) 99312-3344', cpf: '123.456.857-86', email: 'juliana.kramer@bayer.com', perfil: 'Bayer SP (Client)', situacao: 'Ativo' },
+  { id: 'U-013', nome: 'Antônio Carvalho', login: 'antonio.carvalho', telefone: '(54) 99413-4455', cpf: '123.456.864-05', email: 'antonio.carvalho@qima.com', perfil: 'Supervisor', situacao: 'Inativo' },
 ]
 
 /* ------------------------------------------------------------------ *

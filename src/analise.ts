@@ -1,6 +1,6 @@
 import { historicoAcumuladoPorCnpj } from './data/mock'
 import { gruposDeRateio, obterParametros, percentualDesconto } from './store'
-import { CLASSIFICACOES } from './types'
+import { CLASSIFICACOES, campoNaoInformado } from './types'
 import type { AbaVisita, AcumuladoPeriodo, Carga, Classificacao, ErroLiberado, Responsavel, Visita } from './types'
 
 export type Severidade = 'erro' | 'atencao'
@@ -32,11 +32,21 @@ const pct = (n: number) =>
 const PLACAS_FICTICIAS = /^(AAA|ABC|XXX|ZZZ|000|123|TEST)/i
 const PESOS_FICTICIOS = new Set([999, 1000, 1999, 2000, 2999, 3000, 5000, 9999, 10000])
 
+/** "dd/mm/aaaa" → Date local; Date.parse leria como UTC e podia virar o dia */
+function dataParaDate(data: string): Date {
+  const [d, m, a] = data.split('/').map(Number)
+  return new Date(a, m - 1, d)
+}
+
+/** minutos desde a meia-noite de um horário "HH:MM" */
+function emMinutos(hora: string): number {
+  const [h, m] = hora.split(':').map(Number)
+  return h * 60 + m
+}
+
 /** minutos entre dois horários "HH:MM" da mesma data */
 function diferencaMinutos(h1: string, h2: string): number {
-  const [h1h, h1m] = h1.split(':').map(Number)
-  const [h2h, h2m] = h2.split(':').map(Number)
-  return Math.abs(h1h * 60 + h1m - (h2h * 60 + h2m))
+  return Math.abs(emMinutos(h1) - emMinutos(h2))
 }
 
 type CampoNumericoPeriodo = 'negativa' | 'declarada' | 'positiva' | 'participante'
@@ -46,6 +56,74 @@ const CAMPO_PERIODO: Record<Classificacao, CampoNumericoPeriodo> = {
   Declarada: 'declarada',
   Positiva: 'positiva',
   Participante: 'participante',
+}
+
+/**
+ * 2.5 — o acumulado é cumulativo: por tecnologia, um período pode repetir o
+ * valor do anterior, mas nunca ficar abaixo dele.
+ *
+ * Duas coisas que NÃO são retrocesso, e por isso ficam de fora:
+ *  - período inteiro zerado é período não informado, não é queda;
+ *  - tecnologia zerada num período em que as outras vieram é a mesma coisa,
+ *    só daquela tecnologia.
+ * Por isso a comparação exige valor atual maior que zero.
+ *
+ * Vale só para o acumulado. O Dia Anterior é o movimento de um dia — sobe e
+ * desce conforme o que a unidade recebeu —, então não tem regra de
+ * crescimento nenhuma.
+ *
+ * Recebe a série na ordem em que o histórico entrega (do mais novo para o mais
+ * antigo) e devolve os alertas, sem depender do resto da análise.
+ */
+const TECNOLOGIAS = ['negativa', 'declarada', 'positiva', 'participante'] as const
+
+const ROTULO_TECNOLOGIA: Record<(typeof TECNOLOGIAS)[number], string> = {
+  negativa: 'Negativa',
+  declarada: 'Declarada',
+  positiva: 'Positiva',
+  participante: 'Participante',
+}
+
+const periodoZerado = (p: AcumuladoPeriodo) => TECNOLOGIAS.every((t) => p[t] === 0)
+
+export function conferirSerieAcumulado(
+  lista: AcumuladoPeriodo[],
+  rotulo: string,
+  maximo = 3,
+): Alerta[] {
+  const crono = [...lista].reverse() // do mais antigo para o mais novo
+  const achados: Alerta[] = []
+
+  for (let i = 1; i < crono.length && achados.length < maximo; i++) {
+    const anterior = crono[i - 1]
+    const atual = crono[i]
+
+    // período sem nada informado não diz que o acumulado caiu
+    if (periodoZerado(atual)) continue
+
+    const caiu = TECNOLOGIAS.filter((t) => atual[t] > 0 && atual[t] < anterior[t])
+    if (caiu.length === 0) continue
+
+    const detalhes = caiu
+      .map(
+        (t) =>
+          `${ROTULO_TECNOLOGIA[t]} caiu de ${kg(anterior[t])} para ${kg(atual[t])}`,
+      )
+      .join('; ')
+
+    achados.push({
+      id: `b3-retrocesso-${rotulo}-${atual.periodo}`,
+      codigo: '2.5',
+      severidade: 'erro',
+      regra: 'Acumulado menor que o do período anterior (2.5)',
+      detalhe: `${rotulo} ${atual.periodo} vs. ${anterior.periodo}: ${detalhes}. O acumulado pode repetir, mas nunca diminuir.`,
+      aba: 'acumulado',
+      valor: caiu.map((t) => ROTULO_TECNOLOGIA[t]).join(', '),
+      responsavel: 'operacao',
+    })
+  }
+
+  return achados
 }
 
 /**
@@ -64,6 +142,8 @@ export function analisarVisita(visita: Visita): Alerta[] {
     limiteDescontoErro: LIMITE_DESCONTO_ERRO,
     minDigitosPlaca: MIN_DIGITOS_PLACA,
     saltoMaxRomaneio: SALTO_MAX_ROMANEIO,
+    toleranciaHorarioMin: TOLERANCIA_HORARIO_MIN,
+    limiteDiaAnteriorTecnologia: LIMITE_DIA_ANTERIOR,
     caixaFitaMin: CAIXA_FITA_MIN,
     caixaFitaMax: CAIXA_FITA_MAX,
     regrasAtivas,
@@ -96,14 +176,19 @@ export function analisarVisita(visita: Visita): Alerta[] {
   visita.cargas.forEach((c) => {
     const p = percentualDesconto(c)
 
-    // 3.1.1 — horário dentro da janela da visita (sem dado de auditor itinerante, tratado como aviso)
-    if (c.hora < visita.horaInicio || c.hora > visita.horaFim) {
+    // 3.1.1 — horário dentro da janela da visita, com a tolerância configurada em
+    // Parâmetros para os dois lados (sem dado de auditor itinerante, tratado como aviso)
+    const horaCarga = emMinutos(c.hora)
+    const foraDaJanela =
+      horaCarga < emMinutos(visita.horaInicio) - TOLERANCIA_HORARIO_MIN ||
+      horaCarga > emMinutos(visita.horaFim) + TOLERANCIA_HORARIO_MIN
+    if (foraDaJanela) {
       add({
         id: `${c.id}-fora-horario`,
         codigo: '3.1.1',
         severidade: 'atencao',
         regra: 'Carga fora do horário de atuação (3.1.1)',
-        detalhe: `Carga ${c.id} lançada às ${c.hora}, fora da janela ${visita.horaInicio}–${visita.horaFim} da visita.`,
+        detalhe: `Carga ${c.id} lançada às ${c.hora}, fora da janela ${visita.horaInicio}–${visita.horaFim} da visita (tolerância de ${TOLERANCIA_HORARIO_MIN} min).`,
         aba: abaCarga,
         cargaId: c.id,
       })
@@ -123,7 +208,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
     }
 
     // 3.2.3 — produtor não informado
-    if (!c.produtor.trim()) {
+    if (!c.produtor.trim() && !campoNaoInformado(c, 'produtor')) {
       add({
         id: `${c.id}-sem-produtor`,
         codigo: '3.2.3',
@@ -146,8 +231,12 @@ export function analisarVisita(visita: Visita): Alerta[] {
       })
     }
 
-    // 3.2.4 — os dois pesos não informados
-    if (c.pesoLiquido <= 0 && c.pesoComDesconto <= 0) {
+    // 3.2.4 — os dois pesos não informados (marcado à mão não entra: vale 0 no cálculo)
+    if (
+      c.pesoLiquido <= 0 &&
+      c.pesoComDesconto <= 0 &&
+      !(campoNaoInformado(c, 'pesoLiquido') && campoNaoInformado(c, 'pesoComDesconto'))
+    ) {
       add({
         id: `${c.id}-sem-pesos`,
         codigo: '3.2.4',
@@ -157,7 +246,11 @@ export function analisarVisita(visita: Visita): Alerta[] {
         aba: abaCarga,
         cargaId: c.id,
       })
-    } else if (c.pesoComDesconto > c.pesoLiquido) {
+    } else if (
+      c.pesoComDesconto > c.pesoLiquido &&
+      !campoNaoInformado(c, 'pesoLiquido') &&
+      !campoNaoInformado(c, 'pesoComDesconto')
+    ) {
       // 3.4.4
       add({
         id: `${c.id}-peso-invertido`,
@@ -231,7 +324,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
       }
     }
 
-    if (!c.romaneio.trim()) {
+    if (!c.romaneio.trim() && !campoNaoInformado(c, 'romaneio')) {
       // 3.2.2
       add({
         id: `${c.id}-sem-romaneio`,
@@ -261,7 +354,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
     }
 
     const placa = c.placa.replace(/[^A-Za-z0-9]/g, '')
-    if (!placa) {
+    if (!placa && !campoNaoInformado(c, 'placa')) {
       // 3.2.1 / 3.3.1
       add({
         id: `${c.id}-sem-placa`,
@@ -297,7 +390,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
       })
     }
 
-    if (c.pesoLiquido <= 0 && c.pesoComDesconto > 0) {
+    if (c.pesoLiquido <= 0 && c.pesoComDesconto > 0 && !campoNaoInformado(c, 'pesoLiquido')) {
       add({
         id: `${c.id}-peso-zero`,
         codigo: '3.4.8',
@@ -331,7 +424,8 @@ export function analisarVisita(visita: Visita): Alerta[] {
   })
 
   // 3.4.5 — todas as cargas da visita sem peso com desconto informado
-  if (visita.cargas.length > 0 && visita.cargas.every((c) => c.pesoComDesconto <= 0)) {
+  const semDesconto = visita.cargas.filter((c) => !campoNaoInformado(c, 'pesoComDesconto'))
+  if (semDesconto.length > 0 && semDesconto.every((c) => c.pesoComDesconto <= 0)) {
     add({
       id: 'v-sem-peso-desconto',
       codigo: '3.4.5',
@@ -588,7 +682,8 @@ export function analisarVisita(visita: Visita): Alerta[] {
    * 1. Formulário (bloco 2 — Dados da Visita)
    * ================================================================ */
   const d = visita.dadosVisita
-  const temCargas = visita.cargas.length > 0
+  /** recebimento de soja = tem carga acompanhada; não acompanhada não conta */
+  const temAcompanhadas = visita.cargas.some((c) => c.acompanhada)
 
   // 1.1 — visita deve estar marcada como iniciada
   if (d.visitaIniciada !== 'Sim') {
@@ -603,25 +698,27 @@ export function analisarVisita(visita: Visita): Alerta[] {
     })
   }
 
-  // 1.2 — coerência entre "Houve Recebimento" e a existência de cargas
-  if (d.recebimentoCargas === 'Não' && temCargas) {
+  // 1.2 — coerência entre "Houve Recebimento" e cargas acompanhadas
+  if (d.recebimentoCargas === 'Não' && temAcompanhadas) {
     add({
       id: 'b2-recebimento',
       codigo: '1.2',
       severidade: 'erro',
       regra: 'Recebimento de cargas incoerente (1.2)',
-      detalhe: `A pergunta 2.2 está "Não", mas a visita tem ${visita.cargas.length} cargas lançadas.`,
+      detalhe: `A pergunta 2.2 está "Não", mas a visita tem ${visita.cargas.filter((c) => c.acompanhada).length} carga(s) acompanhada(s). Cargas não acompanhadas não contam como recebimento.`,
       aba: 'visita',
       responsavel: 'analista',
     })
   }
-  if (d.recebimentoCargas === 'Sim' && !temCargas) {
+  if (d.recebimentoCargas === 'Sim' && !temAcompanhadas) {
     add({
       id: 'b2-sem-cargas',
       codigo: '1.2',
       severidade: 'erro',
       regra: 'Recebimento sem cargas lançadas (1.2)',
-      detalhe: 'A pergunta 2.2 está "Sim", mas nenhuma carga foi registrada.',
+      detalhe: visita.cargas.length
+        ? 'A pergunta 2.2 está "Sim", mas só há cargas não acompanhadas — recebimento vale só para acompanhadas.'
+        : 'A pergunta 2.2 está "Sim", mas nenhuma carga acompanhada foi registrada.',
       aba: 'visita',
       responsavel: 'analista',
     })
@@ -712,27 +809,30 @@ export function analisarVisita(visita: Visita): Alerta[] {
   const a = visita.acumulado
   const totalAcumulado = CLASSIFICACOES.reduce((s, c) => s + a.valores[c], 0)
 
-  // 2.1 — houve recebimento mas não há dados de acumulado
-  if (d.recebimentoCargas === 'Sim' && totalAcumulado === 0) {
+  // 2.1 — houve recebimento (carga acompanhada) mas não há dados de acumulado.
+  // 0-0-0-0 com "não informado" é um lançamento válido, não um esquecimento.
+  if (temAcompanhadas && totalAcumulado === 0 && a.informadoPeloPdr === 'Sim') {
     add({
       id: 'r2-1-recebimento-sem-acumulado',
       codigo: '2.1',
       severidade: 'erro',
       regra: 'Recebimento sem dados de acumulado (2.1)',
-      detalhe: 'A visita teve recebimento de cargas (2.2), mas o acumulado (bloco 3) está zerado.',
+      detalhe:
+        'A visita tem carga acompanhada, mas o acumulado (bloco 3) está zerado. Cargas não acompanhadas não caracterizam recebimento.',
       aba: 'acumulado',
       responsavel: 'analista',
     })
   }
 
-  // 2.2 — não houve recebimento mas há dados de acumulado
-  if (d.recebimentoCargas === 'Não' && totalAcumulado > 0) {
+  // 2.2 — não houve recebimento acompanhado mas há dados de acumulado
+  if (!temAcompanhadas && totalAcumulado > 0) {
     add({
       id: 'r2-2-sem-recebimento-com-acumulado',
       codigo: '2.2',
       severidade: 'erro',
       regra: 'Acumulado informado sem recebimento (2.2)',
-      detalhe: 'A pergunta 2.2 está "Não", mas o acumulado (bloco 3) tem valores lançados.',
+      detalhe:
+        'Não há carga acompanhada (2.2 = Não), mas o acumulado (bloco 3) tem valores lançados.',
       aba: 'acumulado',
       responsavel: 'analista',
     })
@@ -773,13 +873,19 @@ export function analisarVisita(visita: Visita): Alerta[] {
     })
   }
 
-  const historico = historicoAcumuladoPorCnpj(visita.pdr.cnpj)
-  const ultimoDia = historico.dias[0]
+  /**
+   * A série termina no dia da visita, então dias[0] é o próprio dia auditado e
+   * dias[1] é a véspera. O acumulado informado na visita vale para o dia dela,
+   * e por isso é comparado com a véspera — comparar com dias[0] seria comparar
+   * o número com ele mesmo.
+   */
+  const historico = historicoAcumuladoPorCnpj(visita.pdr.cnpj, dataParaDate(visita.data))
+  const vespera = historico.dias[1]
 
   // 2.4 — crescimento diário de uma classificação acima de 2.000.000 kg
-  if (ultimoDia) {
+  if (vespera) {
     CLASSIFICACOES.forEach((c) => {
-      const anterior = ultimoDia[CAMPO_PERIODO[c]] * 1000 // histórico está em toneladas
+      const anterior = vespera[CAMPO_PERIODO[c]]
       const crescimento = a.valores[c] - anterior
       if (crescimento > 2_000_000) {
         add({
@@ -787,7 +893,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
           codigo: '2.4',
           severidade: 'erro',
           regra: 'Crescimento diário acima de 2.000.000 kg (2.4)',
-          detalhe: `${c}: cresceu ${kg(crescimento)} em relação ao último dia (${ultimoDia.periodo}).`,
+          detalhe: `${c}: cresceu ${kg(crescimento)} em relação à véspera (${vespera.periodo}).`,
           aba: 'acumulado',
           valor: kg(crescimento),
           responsavel: 'operacao',
@@ -795,48 +901,77 @@ export function analisarVisita(visita: Visita): Alerta[] {
       }
     })
 
-    // 2.6 — acumulado duplicado (mesmo total do último dia registrado)
-    const totalUltimoDia =
-      (ultimoDia.negativa + ultimoDia.declarada + ultimoDia.positiva + ultimoDia.participante) * 1000
-    if (totalAcumulado > 0 && totalAcumulado === totalUltimoDia) {
+    // 2.6 — acumulado duplicado (mesmo total da véspera)
+    const totalVespera =
+      vespera.negativa + vespera.declarada + vespera.positiva + vespera.participante
+    if (totalAcumulado > 0 && totalAcumulado === totalVespera) {
       add({
         id: 'r2-6-acumulado-duplicado',
         codigo: '2.6',
         severidade: 'atencao',
         regra: 'Acumulado duplicado (2.6)',
-        detalhe: `O total informado é idêntico ao do último período (${ultimoDia.periodo}) — confira se não foi copiado.`,
+        detalhe: `O total informado é idêntico ao da véspera (${vespera.periodo}) — confira se não foi copiado.`,
         aba: 'acumulado',
         responsavel: 'analista',
       })
     }
   }
 
-  // o acumulado é cumulativo: um período nunca pode valer menos que o anterior (2.5)
-  const totalPeriodo = (p: AcumuladoPeriodo) => p.negativa + p.declarada + p.positiva + p.participante
+  /**
+   * No dia da visita, a série passa a valer o que a visita informou — é o que
+   * a tela mostra, e a regra tem que enxergar o mesmo número que o analista.
+   */
+  const diasComVisita = historico.dias.map((dia, i) =>
+    i === 0
+      ? {
+          ...dia,
+          origem: a.origem,
+          negativa: a.valores.Negativa,
+          declarada: a.valores.Declarada,
+          positiva: a.valores.Positiva,
+          participante: a.valores.Participante,
+        }
+      : dia,
+  )
 
-  const conferirSerie = (lista: AcumuladoPeriodo[], rotulo: string) => {
-    const crono = [...lista].reverse() // do mais antigo para o mais novo
-    let encontrados = 0
-    for (let i = 1; i < crono.length && encontrados < 3; i++) {
-      const anterior = totalPeriodo(crono[i - 1])
-      const atual = totalPeriodo(crono[i])
-      if (atual >= anterior) continue
-      encontrados++
+  conferirSerieAcumulado(diasComVisita, 'Dia').forEach(add)
+  conferirSerieAcumulado(historico.meses, 'Mês').forEach(add)
+
+  /* ------------------------------------------------------ dia anterior *
+   * Lançamento manual do auditor, então as duas regras aqui protegem o
+   * erro de digitação: valor fora de escala e o mesmo dia lançado duas vezes.
+   * ------------------------------------------------------------------- */
+  visita.diaAnterior.forEach((d) => {
+    // 2.9 — teto por tecnologia
+    const acima = CLASSIFICACOES.filter((c) => d.valores[c] > LIMITE_DIA_ANTERIOR)
+    if (acima.length > 0) {
       add({
-        id: `b3-retrocesso-${rotulo}-${crono[i].periodo}`,
-        codigo: '2.5',
+        id: `${d.id}-acima-do-teto`,
+        codigo: '2.9',
         severidade: 'erro',
-        regra: 'Acumulado menor que o do período anterior (2.5)',
-        detalhe: `${rotulo} ${crono[i].periodo} soma ${atual.toLocaleString('pt-BR')} t, abaixo dos ${anterior.toLocaleString('pt-BR')} t de ${crono[i - 1].periodo}. Acumulado não pode diminuir.`,
-        aba: 'acumulado',
-        valor: `−${(anterior - atual).toLocaleString('pt-BR')} t`,
-        responsavel: 'operacao',
+        regra: 'Dia Anterior acima do teto por tecnologia (2.9)',
+        detalhe: `Lançamento de ${d.data}: ${acima
+          .map((c) => `${c} com ${kg(d.valores[c])}`)
+          .join(', ')} — acima do teto de ${kg(LIMITE_DIA_ANTERIOR)} por tecnologia.`,
+        aba: 'dia-anterior',
       })
     }
-  }
+  })
 
-  conferirSerie(historico.dias, 'Dia')
-  conferirSerie(historico.meses, 'Mês')
+  // 2.10 — duas linhas para a mesma data
+  const porData = new Map<string, number>()
+  visita.diaAnterior.forEach((d) => porData.set(d.data, (porData.get(d.data) ?? 0) + 1))
+  porData.forEach((quantidade, data) => {
+    if (quantidade < 2) return
+    add({
+      id: `dia-anterior-duplicado-${data}`,
+      codigo: '2.10',
+      severidade: 'erro',
+      regra: 'Dia Anterior duplicado na mesma data (2.10)',
+      detalhe: `Existem ${quantidade} lançamentos de Dia Anterior para ${data}. Só pode haver um por data.`,
+      aba: 'dia-anterior',
+    })
+  })
 
   /* ------------------------------------------------------- ocorrências */
   visita.ocorrencias.forEach((o) => {

@@ -4,8 +4,10 @@ import { LogoQima } from './Logo'
 import { Modal, Toast } from './ui'
 import { IconLink, IconLista } from './icons'
 import { situacaoPorId } from '../data/mock'
-import { useVisita } from '../store'
-import { USUARIO, iniciais } from '../usuario'
+import { useFalhaPersistencia, useUsuarioLogado, useVisita } from '../store'
+import { iniciais } from '../usuario'
+import MinhaSenha from './MinhaSenha'
+import SeletorIdioma from './SeletorIdioma'
 
 /** copia com fallback para navegadores sem permissão de clipboard */
 async function copiar(texto: string): Promise<boolean> {
@@ -30,6 +32,8 @@ async function copiar(texto: string): Promise<boolean> {
  * com a identificação da visita fixa no topo e o link permanente à mão.
  */
 export default function LayoutVisita() {
+  const usuario = useUsuarioLogado()
+  const falhaAoGravar = useFalhaPersistencia()
   const { cod } = useParams<{ cod: string }>()
   const visita = useVisita(Number(cod))
   const [aviso, setAviso] = useState<string | null>(null)
@@ -89,13 +93,21 @@ export default function LayoutVisita() {
         </Link>
 
         <div className="user">
-          <div className="user__avatar">{iniciais(USUARIO.nome)}</div>
+          <div className="user__avatar">{iniciais(usuario.nome)}</div>
           <div className="user__name">
-            {USUARIO.nome}
-            <div className="user__role">{USUARIO.papel}</div>
+            {usuario.nome}
+            <div className="user__role">{usuario.perfil}</div>
           </div>
+          <MinhaSenha />
+          <SeletorIdioma />
         </div>
       </header>
+
+      {falhaAoGravar && (
+        <div className="faixa-falha" role="alert">
+          <strong>Alterações não estão sendo salvas.</strong> {falhaAoGravar}
+        </div>
+      )}
 
       <Outlet />
 

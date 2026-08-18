@@ -4,6 +4,7 @@ import { IconAlerta, IconLista } from './icons'
 import { Compositor, ListaMensagens, mensagensOrdenadas } from './Conversa'
 import {
   certificarVisita,
+  devolverParaCentral,
   enviarMensagem,
   enviarParaOperacao,
   obterParametros,
@@ -54,6 +55,8 @@ export default function AbaComunicacao({
   }
 
   const certificada = visita.situacao === 'certificada'
+  const naCentral = visita.situacao === 'central-correcao'
+  const naOperacao = visita.situacao === 'operacao-correcao'
 
   return (
     <>
@@ -100,9 +103,16 @@ export default function AbaComunicacao({
               <IconAlerta size={15} /> Enviar erros ao chat
             </button>
           )}
-          <button className="btn btn--dark" type="button" onClick={() => setEnviando(true)}>
-            Enviar para operação
-          </button>
+          {naCentral && (
+            <button className="btn btn--dark" type="button" onClick={() => setEnviando(true)}>
+              Enviar para operação
+            </button>
+          )}
+          {naOperacao && (
+            <button className="btn btn--dark" type="button" onClick={() => setEnviando(true)}>
+              Enviar para central
+            </button>
+          )}
           <button
             className="btn btn--certificar"
             type="button"
@@ -115,13 +125,20 @@ export default function AbaComunicacao({
       </Panel>
 
       {enviando && (
-        <ModalOperacao
-          visita={visita}
+        <ModalConfirmarEnvio
+          titulo={naOperacao ? 'Enviar para a Central' : 'Enviar para a Operação'}
+          pergunta={
+            naOperacao
+              ? 'Tem certeza que deseja enviar esta visita para a Central?'
+              : 'Tem certeza que deseja enviar esta visita para a Operação?'
+          }
+          confirmarLabel={naOperacao ? 'Enviar para central' : 'Enviar para operação'}
           onClose={() => setEnviando(false)}
-          onConfirmar={(motivo) => {
-            enviarParaOperacao(visita.cod, motivo)
+          onConfirmar={() => {
+            if (naOperacao) devolverParaCentral(visita.cod)
+            else enviarParaOperacao(visita.cod)
             setEnviando(false)
-            onAviso('Visita devolvida à Operação.')
+            onAviso(naOperacao ? 'Visita enviada à Central.' : 'Visita enviada à Operação.')
           }}
         />
       )}
@@ -169,21 +186,22 @@ function formatarErrosParaChat(erros: Alerta[]) {
 }
 
 /* ------------------------------------------------------------------ */
-function ModalOperacao({
-  visita,
+function ModalConfirmarEnvio({
+  titulo,
+  pergunta,
+  confirmarLabel,
   onClose,
   onConfirmar,
 }: {
-  visita: Visita
+  titulo: string
+  pergunta: string
+  confirmarLabel: string
   onClose: () => void
-  onConfirmar: (motivo: string) => void
+  onConfirmar: () => void
 }) {
-  const [motivo, setMotivo] = useState('')
-
   return (
     <Modal
-      titulo="Enviar para a Operação"
-      subtitulo={`Visita ${visita.cod} — ${visita.pdr.nome}`}
+      titulo={titulo}
       onClose={onClose}
       rodape={
         <>
@@ -191,30 +209,13 @@ function ModalOperacao({
           <button className="btn btn--ghost" type="button" onClick={onClose}>
             Cancelar
           </button>
-          <button
-            className="btn btn--primary"
-            type="button"
-            disabled={!motivo.trim()}
-            onClick={() => onConfirmar(motivo.trim())}
-          >
-            Enviar para operação
+          <button className="btn btn--primary" type="button" onClick={onConfirmar}>
+            {confirmarLabel}
           </button>
         </>
       }
     >
-      <div className="field">
-        <label htmlFor="motivo-op">O que a operação precisa corrigir?</label>
-        <textarea
-          id="motivo-op"
-          value={motivo}
-          autoFocus
-          onChange={(e) => setMotivo(e.target.value)}
-          placeholder="Ex.: reenviar as fotos das placas do rateio RT-295430-02 e o laudo de umidade."
-        />
-        <span className="field__hint">
-          O texto entra na conversa da visita e fica como motivo da devolução.
-        </span>
-      </div>
+      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>{pergunta}</p>
     </Modal>
   )
 }

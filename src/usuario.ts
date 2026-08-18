@@ -1,9 +1,3 @@
-/** usuário logado — substituir pela sessão real quando houver autenticação */
-export const USUARIO = {
-  nome: 'Bruno de Souza Ferreira',
-  papel: 'Central de Informações',
-}
-
 export function iniciais(nome: string): string {
   const partes = nome.split(' ').filter(Boolean)
   if (!partes.length) return '?'

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
+import { useT } from '../i18n'
 import { situacaoPorId } from '../data/mock'
-import type { SituacaoId } from '../types'
+import type { SituacaoId, Visita } from '../types'
 import { fmtNum, fmtPct } from '../format'
 
 type Etapa = {
@@ -62,26 +63,37 @@ const ETAPAS: Etapa[] = [
 ]
 
 export default function FluxoVisitas({
-  contagens,
+  visitas,
   total,
 }: {
-  contagens: Record<SituacaoId, number>
+  visitas: Visita[]
   total: number
 }) {
+  const t = useT()
+  /**
+   * A contagem por etapa olha situação E rodada. Antes olhava só a situação, e
+   * por isso os cards da 2ª passagem repetiam o número da 1ª — uma visita
+   * recém-chegada aparecia como se já tivesse ido e voltado da Operação.
+   */
+  const quantidade = (e: Etapa) =>
+    visitas.filter(
+      (v) =>
+        v.situacao === e.situacao &&
+        (e.saida || (e.repeticao ? v.rodada >= 2 : v.rodada <= 1)),
+    ).length
   return (
     <section className="fluxo">
       <div className="fluxo__head">
-        <span className="fluxo__titulo">Fluxo de tratamento da visita</span>
+        <span className="fluxo__titulo">{t('Fluxo de tratamento da visita')}</span>
         <span className="fluxo__hint">
-          A visita percorre as filas na ordem abaixo até ser cancelada ou certificada · clique em
-          um card para abrir a lista
+          {t('A visita percorre as filas na ordem abaixo até ser cancelada ou certificada · clique em um card para abrir a lista')}
         </span>
       </div>
 
       <div className="fluxo__trilha">
         {ETAPAS.map((e, i) => {
           const s = situacaoPorId(e.situacao)
-          const qtd = contagens[e.situacao]
+          const qtd = quantidade(e)
           const pct = total ? (qtd / total) * 100 : 0
 
           return (
@@ -96,23 +108,23 @@ export default function FluxoVisitas({
               )}
 
               <Link
-                to={`/visitas/${e.situacao}`}
+                to={`/visitas/${e.situacao}${e.repeticao ? '?rodada=2' : e.saida ? '' : '?rodada=1'}`}
                 className={`fluxo-card${e.repeticao ? ' fluxo-card--rep' : ''}`}
                 style={{ ['--c' as string]: s.color }}
               >
                 <span className="fluxo-card__passo">
-                  {e.saida ? 'saída' : `etapa ${i + 1}`}
+                  {e.saida ? t('saída') : `${t('etapa')} ${i + 1}`}
                 </span>
                 <span className="fluxo-card__titulo">
                   <i className="fluxo-card__dot" />
-                  {e.rotulo}
+                  {t(e.rotulo)}
                   {e.repeticao && <b className="fluxo-card__rep">2ª</b>}
                 </span>
-                <span className="fluxo-card__desc">{e.descricao}</span>
+                <span className="fluxo-card__desc">{t(e.descricao)}</span>
 
                 <span className="fluxo-card__valor">
                   <b className="fluxo-card__num">{fmtNum(qtd)}</b>
-                  <span className="fluxo-card__cta">Abrir lista →</span>
+                  <span className="fluxo-card__cta">{t('Abrir lista →')}</span>
                 </span>
 
                 <span className="fluxo-card__barra">
@@ -120,8 +132,8 @@ export default function FluxoVisitas({
                 </span>
                 <span className="fluxo-card__rodape">
                   {e.repeticao
-                    ? `mesma fila da etapa ${i - 1} · ${fmtPct(pct)} da safra`
-                    : `${fmtPct(pct)} do total da safra`}
+                    ? `${t('voltou da Operação')} · ${fmtPct(pct)}`
+                    : `${fmtPct(pct)}`}
                 </span>
               </Link>
             </div>

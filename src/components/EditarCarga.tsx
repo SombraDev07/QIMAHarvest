@@ -1,9 +1,28 @@
 import { useMemo, useState } from 'react'
 import { Modal } from './ui'
 import { IconInfo } from './icons'
-import { CLASSIFICACOES, type Carga, type Classificacao, type GrupoRateio } from '../types'
+import {
+  CLASSIFICACOES,
+  PESO_LIQUIDO_MAX,
+  campoNaoInformado,
+  type CampoCargaNaoInformado,
+  type Carga,
+  type Classificacao,
+  type GrupoRateio,
+} from '../types'
 import { proximoIdCarga } from '../data/mock'
-import { fmtKg, fmtPct } from '../format'
+import {
+  fmtKg,
+  fmtNum,
+  fmtPct,
+  horaValida,
+  mascaraCpfCnpj,
+  mascaraHora,
+  mascaraPlaca,
+  mascaraProdutor,
+  mascaraRomaneio,
+  numeroDigitado,
+} from '../format'
 
 const NOVO_GRUPO = '__novo__'
 
@@ -44,6 +63,23 @@ export default function EditarCarga({
   const set = <K extends keyof Carga>(campo: K, valor: Carga[K]) =>
     setForm((f) => ({ ...f, [campo]: valor }))
 
+  /** peso líquido trava no teto e puxa o peso com desconto junto, para não passar dele */
+  const setPesoLiquido = (texto: string) =>
+    setForm((f) => {
+      const pesoLiquido = Math.min(numeroDigitado(texto), PESO_LIQUIDO_MAX)
+      return { ...f, pesoLiquido, pesoComDesconto: Math.min(f.pesoComDesconto, pesoLiquido) }
+    })
+
+  /** desconto nunca ultrapassa o líquido — enquanto o líquido é zero, aceita livre */
+  const setPesoComDesconto = (texto: string) =>
+    setForm((f) => {
+      const digitado = numeroDigitado(texto)
+      return {
+        ...f,
+        pesoComDesconto: f.pesoLiquido > 0 ? Math.min(digitado, f.pesoLiquido) : digitado,
+      }
+    })
+
   const pct = useMemo(
     () =>
       form.pesoLiquido > 0
@@ -59,13 +95,30 @@ export default function EditarCarga({
   /** já é membro do grupo: pode editar, mas a alteração propaga para os demais */
   const grupoAtual = form.rateio && grupoSel === carga.grupoRateio ? grupoAtivo : undefined
   const herdando = entrandoEmOutroGrupo
+  const setNI = (campo: CampoCargaNaoInformado, marcado: boolean) =>
+    setForm((f) => {
+      const naoInformado = { ...f.naoInformado, [campo]: marcado || undefined }
+      if (!marcado) return { ...f, naoInformado }
+      if (campo === 'pesoLiquido') return { ...f, naoInformado, pesoLiquido: 0 }
+      if (campo === 'pesoComDesconto') return { ...f, naoInformado, pesoComDesconto: 0 }
+      if (campo === 'placa') return { ...f, naoInformado, placa: '' }
+      if (campo === 'romaneio') return { ...f, naoInformado, romaneio: '' }
+      if (campo === 'produtor') return { ...f, naoInformado, produtor: '' }
+      return { ...f, naoInformado, cpfCnpjProdutor: '' }
+    })
 
   const erros: string[] = []
-  if (!form.placa.trim()) erros.push('Informe a placa.')
-  if (!form.produtor.trim()) erros.push('Informe o produtor.')
-  if (!form.romaneio.trim()) erros.push('Informe o romaneio.')
-  if (form.pesoLiquido <= 0) erros.push('Peso líquido deve ser maior que zero.')
-  if (form.pesoComDesconto > form.pesoLiquido)
+  if (!horaValida(form.hora)) erros.push('Hora inválida — use hh:mm entre 00:00 e 23:59.')
+  if (!campoNaoInformado(form, 'placa') && !form.placa.trim()) erros.push('Informe a placa.')
+  if (!campoNaoInformado(form, 'produtor') && !form.produtor.trim()) erros.push('Informe o produtor.')
+  if (!campoNaoInformado(form, 'romaneio') && !form.romaneio.trim()) erros.push('Informe o romaneio.')
+  if (!campoNaoInformado(form, 'pesoLiquido') && form.pesoLiquido <= 0)
+    erros.push('Peso líquido deve ser maior que zero.')
+  if (
+    !campoNaoInformado(form, 'pesoLiquido') &&
+    !campoNaoInformado(form, 'pesoComDesconto') &&
+    form.pesoComDesconto > form.pesoLiquido
+  )
     erros.push('Peso com desconto não pode ser maior que o peso líquido.')
 
   function salvar() {
@@ -133,7 +186,9 @@ export default function EditarCarga({
             id="c-hora"
             value={form.hora}
             disabled={herdando}
-            onChange={(e) => set('hora', e.target.value)}
+            inputMode="numeric"
+            maxLength={5}
+            onChange={(e) => set('hora', mascaraHora(e.target.value))}
             placeholder="hh:mm"
           />
         </div>
@@ -142,19 +197,30 @@ export default function EditarCarga({
           <input
             id="c-placa"
             value={form.placa}
-            disabled={herdando}
-            onChange={(e) => set('placa', e.target.value.toUpperCase())}
+            disabled={herdando || campoNaoInformado(form, 'placa')}
+            maxLength={7}
+            onChange={(e) => set('placa', mascaraPlaca(e.target.value))}
+            placeholder="ABC1D23"
           />
-          {form.rateio && (
+          {form.rateio ? (
             <span className="field__hint">Compartilhada por todo o grupo de rateio.</span>
+          ) : (
+            <span className="field__hint">Até 7 caracteres, sem espaço ou traço.</span>
           )}
+          <NaoInformado marcado={campoNaoInformado(form, 'placa')} onChange={(v) => setNI('placa', v)} />
         </div>
         <div className="field">
           <label htmlFor="c-romaneio">Romaneio</label>
           <input
             id="c-romaneio"
             value={form.romaneio}
-            onChange={(e) => set('romaneio', e.target.value)}
+            disabled={campoNaoInformado(form, 'romaneio')}
+            onChange={(e) => set('romaneio', mascaraRomaneio(e.target.value))}
+          />
+          <span className="field__hint">Sem traço, pontuação ou espaço duplo.</span>
+          <NaoInformado
+            marcado={campoNaoInformado(form, 'romaneio')}
+            onChange={(v) => setNI('romaneio', v)}
           />
         </div>
         <div className="field span-2">
@@ -162,7 +228,13 @@ export default function EditarCarga({
           <input
             id="c-produtor"
             value={form.produtor}
-            onChange={(e) => set('produtor', e.target.value)}
+            disabled={campoNaoInformado(form, 'produtor')}
+            onChange={(e) => set('produtor', mascaraProdutor(e.target.value))}
+          />
+          <span className="field__hint">Caixa alta, sem acento e sem espaço duplo.</span>
+          <NaoInformado
+            marcado={campoNaoInformado(form, 'produtor')}
+            onChange={(v) => setNI('produtor', v)}
           />
         </div>
         <div className="field">
@@ -170,30 +242,49 @@ export default function EditarCarga({
           <input
             id="c-doc"
             value={form.cpfCnpjProdutor}
-            onChange={(e) => set('cpfCnpjProdutor', e.target.value)}
+            disabled={campoNaoInformado(form, 'cpfCnpjProdutor')}
+            inputMode="numeric"
+            maxLength={18}
+            onChange={(e) => set('cpfCnpjProdutor', mascaraCpfCnpj(e.target.value))}
+            placeholder="000.000.000-00"
+          />
+          <NaoInformado
+            marcado={campoNaoInformado(form, 'cpfCnpjProdutor')}
+            onChange={(v) => setNI('cpfCnpjProdutor', v)}
           />
         </div>
         <div className="field">
           <label htmlFor="c-pl">Peso líquido (kg)</label>
           <input
             id="c-pl"
-            type="number"
-            value={form.pesoLiquido || ''}
-            onChange={(e) => set('pesoLiquido', Number(e.target.value))}
+            inputMode="numeric"
+            value={form.pesoLiquido ? fmtNum(form.pesoLiquido) : ''}
+            disabled={campoNaoInformado(form, 'pesoLiquido')}
+            onChange={(e) => setPesoLiquido(e.target.value)}
+          />
+          <span className="field__hint">Máximo {fmtKg(PESO_LIQUIDO_MAX)}.</span>
+          <NaoInformado
+            marcado={campoNaoInformado(form, 'pesoLiquido')}
+            onChange={(v) => setNI('pesoLiquido', v)}
           />
         </div>
         <div className="field">
           <label htmlFor="c-pd">Peso com desconto (kg)</label>
           <input
             id="c-pd"
-            type="number"
-            value={form.pesoComDesconto || ''}
-            onChange={(e) => set('pesoComDesconto', Number(e.target.value))}
+            inputMode="numeric"
+            value={form.pesoComDesconto ? fmtNum(form.pesoComDesconto) : ''}
+            disabled={campoNaoInformado(form, 'pesoComDesconto')}
+            onChange={(e) => setPesoComDesconto(e.target.value)}
           />
           <span className="field__hint">
             Desconto calculado: <strong>{fmtPct(pct)}</strong> ·{' '}
             {fmtKg(Math.max(0, form.pesoLiquido - form.pesoComDesconto))}
           </span>
+          <NaoInformado
+            marcado={campoNaoInformado(form, 'pesoComDesconto')}
+            onChange={(v) => setNI('pesoComDesconto', v)}
+          />
         </div>
         <div className="field">
           <label htmlFor="c-class">Classificação</label>
@@ -277,5 +368,20 @@ export default function EditarCarga({
         </div>
       )}
     </Modal>
+  )
+}
+
+function NaoInformado({
+  marcado,
+  onChange,
+}: {
+  marcado: boolean
+  onChange: (v: boolean) => void
+}) {
+  return (
+    <label className="field__ni">
+      <input type="checkbox" checked={marcado} onChange={(e) => onChange(e.target.checked)} />
+      Não informado
+    </label>
   )
 }

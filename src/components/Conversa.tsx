@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { IconAlerta } from './icons'
-import { enviarMensagem } from '../store'
+import { obterUsuarioLogado, enviarMensagem } from '../store'
 import type { Mensagem, Visita } from '../types'
-import { USUARIO, corDoNome, iniciais } from '../usuario'
+import { corDoNome, iniciais } from '../usuario'
 import { fmtDataHora } from '../format'
 
 /** mensagens da visita em ordem cronológica — usado no resumo e no chat flutuante */
@@ -32,7 +32,7 @@ export function ListaMensagens({ mensagens }: { mensagens: Mensagem[] }) {
             <span className="msg-sistema__hora">{fmtDataHora(m.ts)}</span>
           </div>
         ) : (
-          <article className={`msg${m.autor === USUARIO.nome ? ' msg--propria' : ''}`} key={m.id}>
+          <article className={`msg${m.autor === obterUsuarioLogado().nome ? ' msg--propria' : ''}`} key={m.id}>
             <div className="msg__avatar" style={{ background: corDoNome(m.autor) }}>
               {iniciais(m.autor)}
             </div>
@@ -93,8 +93,8 @@ export function Compositor({
 
   return (
     <div className="compositor">
-      <div className="compositor__avatar" style={{ background: corDoNome(USUARIO.nome) }}>
-        {iniciais(USUARIO.nome)}
+      <div className="compositor__avatar" style={{ background: corDoNome(obterUsuarioLogado().nome) }}>
+        {iniciais(obterUsuarioLogado().nome)}
       </div>
       <div className="compositor__corpo">
         <textarea

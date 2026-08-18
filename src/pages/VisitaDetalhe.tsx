@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useT } from '../i18n'
 import { Link, useParams } from 'react-router-dom'
 import {
   CORES_CLASSIFICACAO,
@@ -7,11 +8,18 @@ import {
   situacaoPorId,
 } from '../data/mock'
 import {
+  definirInformouDiaAnterior,
+  diaAnteriorDe,
   percentualDesconto,
   salvarAcumulado,
   salvarDadosVisita,
+  salvarDiaAnterior,
+  useObservacaoPdr,
   useParametros,
+  useUsuarioLogado,
+  usePodeEditarVisita,
   useVisita,
+  useVisitas,
 } from '../store'
 import {
   CLASSIFICACOES,
@@ -46,24 +54,57 @@ import TabelaCargas from '../components/TabelaCargas'
 import TabelaDivergencias from '../components/TabelaDivergencias'
 import AbaComunicacao from '../components/AbaComunicacao'
 import ChatFlutuante from '../components/ChatFlutuante'
-import { fmtDataHora, fmtKg, fmtNum, fmtPct, fmtTon } from '../format'
+import { fmtDataHora, fmtKg, fmtNum, fmtPct, fmtTon, numeroDigitado, vespera } from '../format'
 
 type AbaId = AbaVisita
+
+/** janela de dias anteriores mostrada na aba Dia Anterior */
+const DIAS_ANTERIORES = 14
+
+/** "dd/mm/aaaa" → Date local, sem passar por Date.parse (que lê como UTC) */
+function dataParaDate(data: string): Date {
+  const [d, m, a] = data.split('/').map(Number)
+  return new Date(a, m - 1, d)
+}
 
 export default function VisitaDetalhe() {
   const { cod } = useParams<{ cod: string }>()
   const visita = useVisita(Number(cod))
+  // analisarVisita lê os parâmetros por obterParametros(), que não é reativo —
+  // assinar aqui é o que faz a análise reagir a uma mudança em Administração
+  const parametros = useParametros()
+  const usuarioLogado = useUsuarioLogado()
+  const t = useT()
+  const podeEditar = usePodeEditarVisita()
   const [aba, setAba] = useState<AbaId>('visita')
   const [aviso, setAviso] = useState<string | null>(null)
   /** carga que o analista pediu para inspecionar a partir da análise */
   const [foco, setFoco] = useState<string | null>(null)
 
-  useEffect(() => {
+  // trocar de visita reseta aba e foco. Ajustar durante o render (e não num
+  // efeito) evita o flash da visita nova exibida com o estado da anterior
+  const [codAnterior, setCodAnterior] = useState(cod)
+  if (cod !== codAnterior) {
+    setCodAnterior(cod)
     setAba('visita')
     setFoco(null)
-  }, [cod])
+  }
 
-  if (!visita) {
+  // a análise percorre o catálogo inteiro e devolve estruturas novas (o Map de
+  // problemas é prop das tabelas); sem memo ela refaz tudo e invalida os memos
+  // das filhas a cada tecla digitada em qualquer modal
+  const analise = useMemo(() => {
+    if (!visita) return null
+    const alertas = analisarVisita(visita)
+    // erros já liberados com justificativa não voltam a bloquear
+    const { ativos } = aplicarLiberacoes(alertas, visita.errosLiberados)
+    return { alertas, resumo: resumoAnalise(ativos), problemas: problemasPorCarga(ativos) }
+    // parametros não aparece no corpo, mas analisarVisita o lê por obterParametros();
+    // sem ele na lista, mexer em Administração não recalcularia a análise
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visita, parametros])
+
+  if (!visita || !analise) {
     return (
       <main className="page">
         <Breadcrumb trilha={[{ label: 'Visitas', to: '/visitas' }, { label: 'Não encontrada' }]} />
@@ -76,11 +117,7 @@ export default function VisitaDetalhe() {
   const acompanhadas = visita.cargas.filter((c) => c.acompanhada)
   const naoAcompanhadas = visita.cargas.filter((c) => !c.acompanhada)
 
-  const alertas = analisarVisita(visita)
-  // erros já liberados com justificativa não voltam a bloquear
-  const { ativos } = aplicarLiberacoes(alertas, visita.errosLiberados)
-  const resumo = resumoAnalise(ativos)
-  const problemas = problemasPorCarga(ativos)
+  const { alertas, resumo, problemas } = analise
 
   /** leva o analista direto ao ponto do problema */
   function irAoAlerta(a: Alerta) {
@@ -95,6 +132,12 @@ export default function VisitaDetalhe() {
     { id: 'unidade', num: '1', label: 'Dados da Unidade' },
     { id: 'visita', num: '2', label: 'Dados da Visita' },
     { id: 'acumulado', num: '3', label: 'Histórico de Acumulado' },
+    {
+      id: 'dia-anterior',
+      num: '3.1',
+      label: 'Dia Anterior',
+      count: visita.diaAnterior.length,
+    },
     { id: 'cargas', num: '4', label: 'Acompanhamento de Cargas', count: acompanhadas.length },
     { id: 'divergencias', num: '4.1', label: 'Divergências', count: problemas.size },
     {
@@ -111,9 +154,9 @@ export default function VisitaDetalhe() {
     <main className="page">
       <Breadcrumb
         trilha={[
-          { label: 'Início', to: '/visitas' },
-          { label: 'Visitas', to: '/visitas' },
-          { label: meta.label, to: `/visitas/${visita.situacao}` },
+          { label: t('Início'), to: '/visitas' },
+          { label: t('Visitas'), to: '/visitas' },
+          { label: t(meta.label), to: `/visitas/${visita.situacao}` },
           { label: String(visita.cod) },
         ]}
       />
@@ -130,7 +173,7 @@ export default function VisitaDetalhe() {
           </div>
           <div className="detail-head__right">
             <Link className="btn btn--ghost btn--sm" to={`/visitas/${visita.situacao}`}>
-              Ver lista de {meta.label} →
+              Ver lista de {t(meta.label)} →
             </Link>
           </div>
         </div>
@@ -162,7 +205,18 @@ export default function VisitaDetalhe() {
           </div>
         )}
 
-        {resumo.total > 0 && (
+        {!podeEditar && (
+        <div className="alert alert--lock" style={{ marginTop: 14 }}>
+          <IconCadeado />
+          <span>
+            Seu perfil (<strong>{usuarioLogado.perfil}</strong>) abre a visita em leitura. Alterar
+            cargas, acumulado e dados da visita é permitido a Admin, Strategic Leader, Operational
+            Leader e Information Analyst — o chat segue liberado.
+          </span>
+        </div>
+      )}
+
+      {resumo.total > 0 && (
           <button
             type="button"
             className={`detail-head__analise${resumo.erros ? ' detail-head__analise--erro' : ' detail-head__analise--atencao'}`}
@@ -198,7 +252,7 @@ export default function VisitaDetalhe() {
             onClick={() => setAba(a.id)}
           >
             <span className="tabs__num">{a.num}</span>
-            <span className="tabs__label">{a.label}</span>
+            <span className="tabs__label">{t(a.label)}</span>
             {a.count !== undefined && <span className="tabs__count">{a.count}</span>}
           </button>
         ))}
@@ -208,8 +262,15 @@ export default function VisitaDetalhe() {
         <AbaAnalise visita={visita} alertas={alertas} onIr={irAoAlerta} />
       )}
       {aba === 'unidade' && <AbaUnidade visita={visita} />}
-      {aba === 'visita' && <AbaDadosVisita visita={visita} onAviso={setAviso} />}
-      {aba === 'acumulado' && <AbaAcumulado visita={visita} onAviso={setAviso} />}
+      {aba === 'visita' && (
+        <AbaDadosVisita visita={visita} onAviso={setAviso} podeEditar={podeEditar} />
+      )}
+      {aba === 'acumulado' && (
+        <AbaAcumulado visita={visita} onAviso={setAviso} podeEditar={podeEditar} />
+      )}
+      {aba === 'dia-anterior' && (
+        <AbaDiaAnterior visita={visita} onAviso={setAviso} podeEditar={podeEditar} />
+      )}
       {aba === 'cargas' && (
         <TabelaCargas
           visita={visita}
@@ -527,8 +588,17 @@ function NavegacaoAbas({
  * ================================================================= */
 function AbaUnidade({ visita }: { visita: Visita }) {
   const p = visita.pdr
+  const observacao = useObservacaoPdr(p.cnpj)
   return (
     <div className="stack">
+      {observacao && (
+        <div className="alert alert--pdr">
+          <IconInfo />
+          <span>
+            <strong>Observação da unidade:</strong> {observacao}
+          </span>
+        </div>
+      )}
       <Panel numero="1." titulo="Dados da unidade (PDR)" hint="Cadastro vigente na safra 2025/2026">
         <div className="panel__body">
           <div className="kv-grid">
@@ -575,9 +645,25 @@ function BarrasMensais({ visita }: { visita: Visita }) {
 /* ================================================================= *
  * 2. Dados da visita — questionário
  * ================================================================= */
-function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: string) => void }) {
+function AbaDadosVisita({
+  visita,
+  onAviso,
+  podeEditar,
+}: {
+  visita: Visita
+  onAviso: (m: string) => void
+  podeEditar: boolean
+}) {
   const d = visita.dadosVisita
   const temCargas = visita.cargas.length > 0
+  const temAcompanhadas = visita.cargas.some((c) => c.acompanhada)
+  const soNaoAcompanhadas = temCargas && !temAcompanhadas
+  const recebimentoTravado = temAcompanhadas || soNaoAcompanhadas
+  const recebimentoValor: typeof d.recebimentoCargas = temAcompanhadas
+    ? 'Sim'
+    : soNaoAcompanhadas
+      ? 'Não'
+      : d.recebimentoCargas
   const set = (patch: Partial<typeof d>) => salvarDadosVisita(visita.cod, patch)
 
   return (
@@ -590,6 +676,7 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
             className="btn btn--primary btn--sm"
             type="button"
             onClick={() => onAviso('Dados da visita gravados.')}
+            disabled={!podeEditar}
           >
             Gravar bloco 2
           </button>
@@ -613,7 +700,7 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
             controle={
               <SimNaoInput
                 valor={temCargas ? 'Sim' : d.visitaIniciada}
-                disabled={temCargas}
+                disabled={!podeEditar || temCargas}
                 onChange={(v) => set({ visitaIniciada: v })}
               />
             }
@@ -623,14 +710,26 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
             numero="2.2"
             texto="Houve recebimento de cargas?"
             hint={
-              temCargas
-                ? `${visita.cargas.length} cargas registradas no acompanhamento.`
-                : 'Nenhuma carga lançada até o momento.'
+              temAcompanhadas ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <IconCadeado size={13} />
+                  Travado em <strong>Sim</strong> — {visita.cargas.filter((c) => c.acompanhada).length}{' '}
+                  carga(s) acompanhada(s). Não acompanhadas não contam.
+                </span>
+              ) : soNaoAcompanhadas ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <IconCadeado size={13} />
+                  Travado em <strong>Não</strong> — só há cargas não acompanhadas.
+                </span>
+              ) : (
+                'Nenhuma carga lançada até o momento. Recebimento vale só para cargas acompanhadas.'
+              )
             }
             controle={
               <SimNaoInput
-                valor={d.recebimentoCargas}
+                valor={recebimentoValor}
                 onChange={(v) => set({ recebimentoCargas: v })}
+                disabled={!podeEditar || recebimentoTravado}
               />
             }
           />
@@ -639,7 +738,7 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
             numero="2.3"
             texto="Foram realizados testes?"
             controle={
-              <SimNaoInput valor={d.realizouTestes} onChange={(v) => set({ realizouTestes: v })} />
+              <SimNaoInput valor={d.realizouTestes} onChange={(v) => set({ realizouTestes: v })} disabled={!podeEditar} />
             }
           />
 
@@ -657,6 +756,7 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
                       : { houveReteste: v },
                   )
                 }
+                disabled={!podeEditar}
               />
             }
             extra={
@@ -669,6 +769,7 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
                       value={d.retesteSolicitante}
                       onChange={(e) => set({ retesteSolicitante: e.target.value })}
                       placeholder="Ex.: Central de Informações"
+                      disabled={!podeEditar}
                     />
                   </div>
                   <div className="field">
@@ -678,6 +779,7 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
                       value={d.retesteMotivo}
                       onChange={(e) => set({ retesteMotivo: e.target.value })}
                       placeholder="Descreva o motivo"
+                      disabled={!podeEditar}
                     />
                   </div>
                 </div>
@@ -697,12 +799,14 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
               <SimNaoInput
                 valor={d.houveOcorrencia}
                 onChange={(v) => set({ houveOcorrencia: v })}
+                disabled={!podeEditar}
               />
             }
           />
 
           <CaixaFitaQuestion
             valor={d.caixaFitaTeste}
+            podeEditar={podeEditar}
             onChange={(q) => set({ caixaFitaTeste: q })}
           />
 
@@ -714,6 +818,7 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
               <SimNaoInput
                 valor={d.fitasAssociaveisCargas}
                 onChange={(v) => set({ fitasAssociaveisCargas: v })}
+                disabled={!podeEditar}
               />
             }
           />
@@ -727,9 +832,11 @@ function AbaDadosVisita({ visita, onAviso }: { visita: Visita; onAviso: (m: stri
 function CaixaFitaQuestion({
   valor,
   onChange,
+  podeEditar,
 }: {
   valor: number
   onChange: (v: number) => void
+  podeEditar: boolean
 }) {
   const { caixaFitaMin, caixaFitaMax } = useParametros()
   const limitar = (v: number) =>
@@ -745,7 +852,7 @@ function CaixaFitaQuestion({
           <button
             type="button"
             onClick={() => onChange(limitar(valor - 1))}
-            disabled={valor <= caixaFitaMin}
+            disabled={!podeEditar || valor <= caixaFitaMin}
             aria-label="Diminuir"
           >
             −
@@ -756,11 +863,12 @@ function CaixaFitaQuestion({
             max={caixaFitaMax}
             value={valor}
             onChange={(e) => onChange(limitar(Number(e.target.value)))}
+            disabled={!podeEditar}
           />
           <button
             type="button"
             onClick={() => onChange(limitar(valor + 1))}
-            disabled={valor >= caixaFitaMax}
+            disabled={!podeEditar || valor >= caixaFitaMax}
             aria-label="Aumentar"
           >
             +
@@ -775,11 +883,23 @@ function CaixaFitaQuestion({
 /* ================================================================= *
  * 3. Histórico de acumulado
  * ================================================================= */
-function AbaAcumulado({ visita, onAviso }: { visita: Visita; onAviso: (m: string) => void }) {
+function AbaAcumulado({
+  visita,
+  onAviso,
+  podeEditar,
+}: {
+  visita: Visita
+  onAviso: (m: string) => void
+  podeEditar: boolean
+}) {
   const a = visita.acumulado
   const [granularidade, setGranularidade] = useState<'dias' | 'meses'>('dias')
 
-  const historico = useMemo(() => historicoAcumuladoPorCnpj(visita.pdr.cnpj), [visita.pdr.cnpj])
+  // a série termina na data da visita: a primeira linha é o dia auditado
+  const historico = useMemo(
+    () => historicoAcumuladoPorCnpj(visita.pdr.cnpj, dataParaDate(visita.data)),
+    [visita.pdr.cnpj, visita.data],
+  )
   const periodos = historico[granularidade]
 
   // só a origem PDR aceita digitação; RTV e B2B chegam consolidados da base
@@ -798,7 +918,7 @@ function AbaAcumulado({ visita, onAviso }: { visita: Visita; onAviso: (m: string
           <button
             className="btn btn--primary btn--sm"
             type="button"
-            disabled={!podeDigitar}
+            disabled={!podeEditar || !podeDigitar}
             onClick={() => onAviso('Acumulado gravado.')}
           >
             Gravar acumulado
@@ -818,6 +938,7 @@ function AbaAcumulado({ visita, onAviso }: { visita: Visita; onAviso: (m: string
                     className={a.origem === o ? 'is-on is-origem' : undefined}
                     style={a.origem === o ? { background: CORES_ORIGEM[o], color: '#fff' } : undefined}
                     onClick={() => salvarAcumulado(visita.cod, { origem: o })}
+                    disabled={!podeEditar}
                   >
                     {o}
                   </button>
@@ -836,7 +957,7 @@ function AbaAcumulado({ visita, onAviso }: { visita: Visita; onAviso: (m: string
             controle={
               <SimNaoInput
                 valor={a.informadoPeloPdr}
-                disabled={travado}
+                disabled={!podeEditar || travado}
                 onChange={(v) => salvarAcumulado(visita.cod, { informadoPeloPdr: v })}
               />
             }
@@ -857,13 +978,13 @@ function AbaAcumulado({ visita, onAviso }: { visita: Visita; onAviso: (m: string
             {CLASSIFICACOES.map((c) => (
               <div className="field" key={c}>
                 <label htmlFor={`ac-${c}`} style={{ color: CORES_CLASSIFICACAO[c] }}>
-                  {c} (t)
+                  {c} (kg)
                 </label>
                 <input
                   id={`ac-${c}`}
                   type="number"
                   value={a.valores[c]}
-                  disabled={!podeDigitar}
+                  disabled={!podeEditar || !podeDigitar}
                   onChange={(e) => setValor(c, Number(e.target.value))}
                 />
               </div>
@@ -877,13 +998,13 @@ function AbaAcumulado({ visita, onAviso }: { visita: Visita; onAviso: (m: string
               <div className="total-box__label" style={{ color: CORES_CLASSIFICACAO[c] }}>
                 {c}
               </div>
-              <div className="total-box__value">{fmtTon(a.valores[c])}</div>
+              <div className="total-box__value">{fmtKg(a.valores[c])}</div>
             </div>
           ))}
           <div className="total-box">
             <div className="total-box__label">Total informado</div>
             <div className="total-box__value">
-              {fmtTon(CLASSIFICACOES.reduce((s, c) => s + a.valores[c], 0))}
+              {fmtKg(CLASSIFICACOES.reduce((s, c) => s + a.valores[c], 0))}
             </div>
           </div>
         </div>
@@ -899,6 +1020,7 @@ function AbaAcumulado({ visita, onAviso }: { visita: Visita; onAviso: (m: string
               className={granularidade === 'dias' ? 'is-on is-origem' : undefined}
               style={granularidade === 'dias' ? { background: 'var(--ink-800)', color: '#fff' } : undefined}
               onClick={() => setGranularidade('dias')}
+              disabled={!podeEditar}
             >
               Últimos dias
             </button>
@@ -907,6 +1029,7 @@ function AbaAcumulado({ visita, onAviso }: { visita: Visita; onAviso: (m: string
               className={granularidade === 'meses' ? 'is-on is-origem' : undefined}
               style={granularidade === 'meses' ? { background: 'var(--ink-800)', color: '#fff' } : undefined}
               onClick={() => setGranularidade('meses')}
+              disabled={!podeEditar}
             >
               Últimos meses
             </button>
@@ -916,23 +1039,226 @@ function AbaAcumulado({ visita, onAviso }: { visita: Visita; onAviso: (m: string
         <div className="panel__body" style={{ paddingBottom: 12 }}>
           <span className="cell-muted">
             CNPJ {visita.pdr.cnpj} — {periodos.length}{' '}
-            {granularidade === 'dias' ? 'dias' : 'meses'} mais recentes, em toneladas.
+            {granularidade === 'dias' ? 'dias' : 'meses'} mais recentes, em kg. A linha da visita
+            mostra o acumulado informado no bloco 3.1.
           </span>
         </div>
-        <TabelaAcumulado periodos={periodos} rotulo={granularidade === 'dias' ? 'Dia' : 'Mês'} />
+        <TabelaAcumulado
+          periodos={periodos}
+          rotulo={granularidade === 'dias' ? 'Dia' : 'Mês'}
+          cnpj={visita.pdr.cnpj}
+          diaDaVisita={granularidade === 'dias' ? visita.data : undefined}
+          acumuladoDaVisita={{
+            origem: a.origem,
+            negativa: a.valores.Negativa,
+            declarada: a.valores.Declarada,
+            positiva: a.valores.Positiva,
+            participante: a.valores.Participante,
+          }}
+        />
       </Panel>
     </div>
   )
 }
 
+/**
+ * Dia Anterior — uma linha por dia do histórico da unidade, no mesmo desenho
+ * da tabela 3.2. A tabela já vem completa: cada dia começa como PDR / não
+ * informado / 0-0-0-0, e marcar "Sim" libera as tecnologias daquele dia. Só o
+ * que o auditor mexe é gravado; o resto continua vindo do histórico.
+ */
+function AbaDiaAnterior({
+  visita,
+  onAviso,
+  podeEditar,
+}: {
+  visita: Visita
+  onAviso: (m: string) => void
+  podeEditar: boolean
+}) {
+  const { limiteDiaAnteriorTecnologia: teto } = useParametros()
+  const visitas = useVisitas()
+
+  /**
+   * Os dias anteriores à visita — e não os anteriores a hoje. Para uma visita
+   * de março, listar os últimos dias do sistema mostraria datas posteriores a
+   * ela, que é o oposto de "dia anterior".
+   */
+  const dias = useMemo(() => {
+    // o dia da visita entra como primeira linha, para o auditor ver o que está
+    // lançando hoje ao lado do que veio antes
+    const lista: string[] = [visita.data]
+    let dia = visita.data
+    for (let i = 0; i < DIAS_ANTERIORES; i++) {
+      dia = vespera(dia)
+      lista.push(dia)
+    }
+    return lista
+  }, [visita.data])
+
+  /** visita da unidade naquele dia — é o que torna a linha clicável */
+  const visitaDoDia = (data: string) =>
+    visitas.find((v) => v.pdr.cnpj === visita.pdr.cnpj && v.data === data)
+
+  const informados = visita.diaAnterior.filter((d) => d.informouDiaAnterior === 'Sim')
+
+  return (
+    <div className="stack">
+      <Panel
+        numero="3.1"
+        titulo="Acumulado do dia anterior"
+        hint="Informado pelo PDR e digitado pelo auditor — um dia por linha"
+      >
+        <div className="panel__body" style={{ paddingBottom: 12 }}>
+          <span className="cell-muted">
+            CNPJ {visita.pdr.cnpj} — o dia da visita ({visita.data}) e os {DIAS_ANTERIORES} dias
+            anteriores, em kg. A linha da visita vem do bloco 3 (Acumulado) e não se edita aqui. Dia sem inserção fica como não informado e zerado. Cada tecnologia aceita no
+            máximo {fmtKg(teto)}.{' '}
+            {informados.length > 0 && `${informados.length} dia(s) informado(s).`}
+          </span>
+        </div>
+
+        <div className="table-scroll">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Dia</th>
+                <th>Origem</th>
+                <th>Informou?</th>
+                {CLASSIFICACOES.map((c) => (
+                  <th key={c} style={{ textAlign: 'right' }}>
+                    {c}
+                  </th>
+                ))}
+                <th style={{ textAlign: 'right' }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dias.map((dia) => {
+                const daVisita = dia === visita.data
+                /**
+                 * A linha do dia da visita mostra o acumulado da própria visita
+                 * (bloco 3), em leitura: quem edita aquele número é a aba
+                 * Acumulado, não esta. Aqui ela serve de referência.
+                 */
+                const registro = daVisita
+                  ? {
+                      ...diaAnteriorDe(visita, dia),
+                      informouDiaAnterior: visita.acumulado.informadoPeloPdr,
+                      valores: visita.acumulado.valores,
+                    }
+                  : diaAnteriorDe(visita, dia)
+                const liberado = !daVisita && registro.informouDiaAnterior === 'Sim'
+                const total = CLASSIFICACOES.reduce((s, c) => s + registro.valores[c], 0)
+                const alvo = daVisita ? undefined : visitaDoDia(dia)
+
+                return (
+                  <tr
+                    key={dia}
+                    className={
+                      daVisita ? 'row-desta-visita' : liberado ? 'row-informado' : undefined
+                    }
+                  >
+                    <td>
+                      {daVisita ? (
+                        <span className="mono">
+                          {dia}
+                          <span className="marca-visita">desta visita</span>
+                        </span>
+                      ) : alvo ? (
+                        <a
+                          className="link-visita mono"
+                          href={`#/visita/${alvo.cod}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`Abrir a visita ${alvo.cod} de ${dia} em outra aba`}
+                        >
+                          {dia} <span className="link-visita__cod">#{alvo.cod} ↗</span>
+                        </a>
+                      ) : (
+                        <span className="mono">{dia}</span>
+                      )}
+                    </td>
+                    <td>
+                      <span
+                        className="badge"
+                        style={{
+                          color: CORES_ORIGEM.PDR,
+                          borderColor: `${CORES_ORIGEM.PDR}55`,
+                          background: `${CORES_ORIGEM.PDR}12`,
+                        }}
+                      >
+                        PDR
+                      </span>
+                    </td>
+                    <td>
+                      <SimNaoInput
+                        valor={registro.informouDiaAnterior}
+                        onChange={(v) => {
+                          definirInformouDiaAnterior(visita.cod, dia, v)
+                          if (v === 'Não') onAviso(`${dia} voltou a não informado.`)
+                        }}
+                        disabled={!podeEditar || daVisita}
+                      />
+                    </td>
+                    {CLASSIFICACOES.map((c) => (
+                      <td key={c} className="num">
+                        <input
+                          className="input-num"
+                          inputMode="numeric"
+                          disabled={!podeEditar || !liberado || daVisita}
+                          aria-label={`${c} em ${dia}`}
+                          value={
+                            registro.valores[c] ? fmtNum(registro.valores[c]) : liberado ? '' : '0'
+                          }
+                          onChange={(e) =>
+                            salvarDiaAnterior(visita.cod, dia, {
+                              ...registro.valores,
+                              [c]: numeroDigitado(e.target.value),
+                            })
+                          }
+                        />
+                        {/* o teto é regra do Dia Anterior; a linha da visita é
+                            o acumulado dela, e não responde por essa regra */}
+                        {!daVisita && registro.valores[c] > teto && (
+                          <div className="celula-erro">acima do teto — 2.9</div>
+                        )}
+                      </td>
+                    ))}
+                    <td className="num cell-strong">{fmtKg(total)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </div>
+  )
+}
+
+
 function TabelaAcumulado({
   periodos,
   rotulo,
+  cnpj,
+  diaDaVisita,
+  acumuladoDaVisita,
 }: {
   periodos: AcumuladoPeriodo[]
   rotulo: string
+  cnpj: string
+  /** linha correspondente à data da visita, destacada para situar o analista */
+  diaDaVisita?: string
+  /** valores informados na visita, que substituem os da série naquele dia */
+  acumuladoDaVisita?: Pick<
+    AcumuladoPeriodo,
+    'negativa' | 'declarada' | 'positiva' | 'participante' | 'origem'
+  >
 }) {
+  const visitas = useVisitas()
   const total = (p: AcumuladoPeriodo) => p.negativa + p.declarada + p.positiva + p.participante
+  const visitaDoDia = (data: string) => visitas.find((v) => v.pdr.cnpj === cnpj && v.data === data)
 
   return (
     <div className="table-scroll">
@@ -951,9 +1277,50 @@ function TabelaAcumulado({
           </tr>
         </thead>
         <tbody>
-          {periodos.map((p) => (
-            <tr key={p.periodo}>
-              <td className="cell-strong mono">{p.periodo}</td>
+          {periodos.map((bruto) => {
+            const daVisita = bruto.periodo === diaDaVisita
+            const outra = !daVisita ? visitaDoDia(bruto.periodo) : undefined
+            /**
+             * No dia da visita, o que vale é o acumulado informado nela — a
+             * série é a base histórica da unidade, e mostrá-la aqui exibiria
+             * dois números diferentes para o mesmo dia. O mesmo vale para
+             * outro dia que tenha visita nesta unidade, inclusive 0-0-0-0.
+             */
+            const p =
+              daVisita && acumuladoDaVisita
+                ? { ...bruto, ...acumuladoDaVisita }
+                : outra
+                  ? {
+                      ...bruto,
+                      origem: outra.acumulado.origem,
+                      negativa: outra.acumulado.valores.Negativa,
+                      declarada: outra.acumulado.valores.Declarada,
+                      positiva: outra.acumulado.valores.Positiva,
+                      participante: outra.acumulado.valores.Participante,
+                    }
+                  : bruto
+            return (
+            <tr key={p.periodo} className={daVisita ? 'row-desta-visita' : undefined}>
+              <td className="cell-strong mono">
+                {daVisita ? (
+                  <>
+                    {p.periodo}
+                    <span className="marca-visita">desta visita</span>
+                  </>
+                ) : outra ? (
+                  <a
+                    className="link-visita"
+                    href={`#/visita/${outra.cod}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Abrir a visita ${outra.cod} de ${p.periodo} em outra aba`}
+                  >
+                    {p.periodo} <span className="link-visita__cod">#{outra.cod} ↗</span>
+                  </a>
+                ) : (
+                  p.periodo
+                )}
+              </td>
               <td>
                 <OrigemChip origem={p.origem} />
               </td>
@@ -963,7 +1330,8 @@ function TabelaAcumulado({
               <td className="num">{fmtNum(p.participante)}</td>
               <td className="num cell-strong">{fmtNum(total(p))}</td>
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
     </div>

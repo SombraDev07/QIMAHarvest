@@ -1,9 +1,16 @@
 import { useRef, useState } from 'react'
 import { Modal } from './ui'
 import { IconDownload, IconPlanilha } from './icons'
-import { CLASSIFICACOES, type Carga, type Classificacao } from '../types'
+import { CLASSIFICACOES, PESO_LIQUIDO_MAX, type Carga, type Classificacao } from '../types'
 import { proximoIdCarga } from '../data/mock'
-import { fmtKg } from '../format'
+import {
+  fmtKg,
+  mascaraCpfCnpj,
+  mascaraPlaca,
+  mascaraProdutor,
+  mascaraRomaneio,
+  normalizarHora,
+} from '../format'
 
 /* Colunas aceitas, na ordem do modelo */
 const COLUNAS = [
@@ -83,31 +90,49 @@ export function analisarPlanilha(texto: string, dataPadrao: string): LinhaPrevie
 
     const [
       data,
-      hora,
-      placa,
-      produtor,
-      doc,
-      romaneio,
-      pesoLiquidoRaw,
-      pesoDescontoRaw,
+      horaRaw,
+      placaRaw,
+      produtorRaw,
+      docRaw,
+      romaneioRaw,
+      pesoLiquidoCol,
+      pesoDescontoCol,
       classRaw,
       rateioRaw,
       grupoRaw,
       obs,
     ] = col
 
+    // mesmas máscaras do formulário de edição, para a planilha não entrar
+    // com dado que o app não deixaria digitar
+    const hora = normalizarHora(horaRaw ?? '')
+    const placa = mascaraPlaca(placaRaw ?? '')
+    const produtor = mascaraProdutor(produtorRaw ?? '')
+    const romaneio = mascaraRomaneio(romaneioRaw ?? '')
+    const doc = mascaraCpfCnpj(docRaw ?? '')
+
     if (col.length < 8) erros.push(`Esperadas ao menos 8 colunas, encontradas ${col.length}.`)
     if (!placa) erros.push('Placa vazia.')
     if (!produtor) erros.push('Produtor vazio.')
     if (!romaneio) erros.push('Romaneio vazio.')
+    if (horaRaw && !hora) erros.push(`Hora inválida: "${horaRaw}".`)
 
-    const pesoLiquido = numero(pesoLiquidoRaw)
-    const pesoComDesconto = numero(pesoDescontoRaw)
-    if (!Number.isFinite(pesoLiquido) || pesoLiquido <= 0)
+    const pesoLiquidoRaw = limpar(pesoLiquidoCol ?? '')
+    const pesoDescontoRaw = limpar(pesoDescontoCol ?? '')
+    const liquidoVazio = !pesoLiquidoRaw
+    const descontoVazio = !pesoDescontoRaw
+    const pesoLiquido = liquidoVazio ? 0 : numero(pesoLiquidoRaw)
+    const pesoComDesconto = descontoVazio ? 0 : numero(pesoDescontoRaw)
+    if (!liquidoVazio && (!Number.isFinite(pesoLiquido) || pesoLiquido <= 0))
       erros.push('Peso líquido inválido.')
-    if (!Number.isFinite(pesoComDesconto) || pesoComDesconto <= 0)
+    // peso é valor, não formatação: acima do teto a linha é recusada em vez de truncada
+    else if (!liquidoVazio && pesoLiquido > PESO_LIQUIDO_MAX)
+      erros.push(`Peso líquido acima do máximo de ${fmtKg(PESO_LIQUIDO_MAX)}.`)
+    if (!descontoVazio && (!Number.isFinite(pesoComDesconto) || pesoComDesconto <= 0))
       erros.push('Peso com desconto inválido.')
     if (
+      !liquidoVazio &&
+      !descontoVazio &&
       Number.isFinite(pesoLiquido) &&
       Number.isFinite(pesoComDesconto) &&
       pesoComDesconto > pesoLiquido
@@ -129,9 +154,9 @@ export function analisarPlanilha(texto: string, dataPadrao: string): LinhaPrevie
             id: proximoIdCarga(),
             data: data || dataPadrao,
             hora: hora || '00:00',
-            placa: placa.toUpperCase(),
+            placa,
             produtor,
-            cpfCnpjProdutor: doc ?? '',
+            cpfCnpjProdutor: doc,
             romaneio,
             pesoLiquido,
             pesoComDesconto,
@@ -140,6 +165,14 @@ export function analisarPlanilha(texto: string, dataPadrao: string): LinhaPrevie
             grupoRateio: rateio ? grupo : undefined,
             observacao: obs || undefined,
             acompanhada: true,
+            ...(liquidoVazio || descontoVazio
+              ? {
+                  naoInformado: {
+                    ...(liquidoVazio ? { pesoLiquido: true as const } : {}),
+                    ...(descontoVazio ? { pesoComDesconto: true as const } : {}),
+                  },
+                }
+              : {}),
           }
 
     return { linha: i + (temCabecalho ? 2 : 1), carga, erros, bruto: col }

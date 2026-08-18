@@ -13,7 +13,7 @@ export interface DefinicaoRegra {
 export const CATALOGO_REGRAS: DefinicaoRegra[] = [
   // 1. Formulário
   { codigo: '1.1', secao: '1. Formulário', label: 'Visita deve estar marcada como iniciada' },
-  { codigo: '1.2', secao: '1. Formulário', label: 'Coerência entre "Houve Recebimento" e cargas cadastradas' },
+  { codigo: '1.2', secao: '1. Formulário', label: 'Coerência entre "Houve Recebimento" e cargas acompanhadas' },
   { codigo: '1.3', secao: '1. Formulário', label: 'Coerência entre "Realiza Testes" e resultado informado' },
   { codigo: '1.4', secao: '1. Formulário', label: 'PDR guarda fitas testadas associáveis às cargas' },
   { codigo: '1.5', secao: '1. Formulário', label: 'Reteste realizado precisa de justificativa' },
@@ -28,9 +28,13 @@ export const CATALOGO_REGRAS: DefinicaoRegra[] = [
   { codigo: '2.6', secao: '2. Acumulado', label: 'Acumulado duplicado' },
   { codigo: '2.7', secao: '2. Acumulado', label: 'Acumulado informado e zerado' },
   { codigo: '2.8', secao: '2. Acumulado', label: 'Acumulado com valor negativo' },
+  // Dia Anterior entra como 2.9/2.10 em vez de virar seção nova: os códigos são
+  // a chave de regrasAtivas, e renumerar as seções invalidaria o que já está salvo
+  { codigo: '2.9', secao: '2. Acumulado', label: 'Dia Anterior acima do teto por tecnologia' },
+  { codigo: '2.10', secao: '2. Acumulado', label: 'Dia Anterior duplicado na mesma data' },
 
   // 3. Cargas
-  { codigo: '3.1.1', secao: '3. Cargas', label: 'Horário da carga dentro da janela da visita' },
+  { codigo: '3.1.1', secao: '3. Cargas', label: 'Horário da carga dentro da janela da visita (com tolerância)' },
   { codigo: '3.1.2', secao: '3. Cargas', label: 'Data da carga igual à data da visita' },
   { codigo: '3.2.1', secao: '3. Cargas', label: 'Carga sem placa' },
   { codigo: '3.2.2', secao: '3. Cargas', label: 'Carga sem romaneio' },

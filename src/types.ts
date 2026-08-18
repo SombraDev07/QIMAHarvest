@@ -20,11 +20,15 @@ export type AbaVisita =
   | 'unidade'
   | 'visita'
   | 'acumulado'
+  | 'dia-anterior'
   | 'cargas'
   | 'divergencias'
   | 'nao-acompanhadas'
   | 'ocorrencias'
   | 'resumo'
+
+/** teto de peso líquido aceito numa carga, tanto no formulário quanto na importação */
+export const PESO_LIQUIDO_MAX = 120_000
 
 /** Classificações usadas no acompanhamento e no acumulado */
 export type Classificacao = 'Negativa' | 'Declarada' | 'Positiva' | 'Participante'
@@ -73,13 +77,28 @@ export interface Carga {
   fotoUrl?: string
   /** tecnologia (trait) da semente foi testada em laboratório */
   tecnologiaTestada?: boolean
+  /** campos que o analista marcou como não informados — trava o input e, nos pesos, vale 0 */
+  naoInformado?: Partial<Record<CampoCargaNaoInformado, boolean>>
 }
+
+export type CampoCargaNaoInformado =
+  | 'placa'
+  | 'romaneio'
+  | 'produtor'
+  | 'cpfCnpjProdutor'
+  | 'pesoLiquido'
+  | 'pesoComDesconto'
+
+export const campoNaoInformado = (
+  c: Carga,
+  campo: CampoCargaNaoInformado,
+): boolean => Boolean(c.naoInformado?.[campo])
 
 /** Bloco 2 — Dados da Visita */
 export interface DadosVisita {
   /** 2.1 — travado em "Sim" quando existem cargas lançadas */
   visitaIniciada: SimNao
-  /** 2.2 */
+  /** 2.2 — Sim só com carga acompanhada; não acompanhada não é recebimento */
   recebimentoCargas: SimNao
   realizouTestes: SimNao
   houveReteste: SimNao
@@ -158,6 +177,20 @@ export interface HistoricoAcumulado {
   meses: AcumuladoPeriodo[]
 }
 
+/**
+ * Bloco 3.2 — acumulado do dia anterior. Ao contrário do histórico, que chega
+ * consolidado da base (PDR/RTV/B2B), este é lançado à mão pelo auditor durante
+ * a visita, e por isso não tem origem.
+ */
+export interface DiaAnterior {
+  id: string
+  /** dd/mm/aaaa — herdada da visita (a véspera), não digitada */
+  data: string
+  /** "Não" é o padrão: a visita já nasce com o registro, zerado e travado */
+  informouDiaAnterior: SimNao
+  valores: Record<Classificacao, number>
+}
+
 export interface Procedimento {
   item: string
   resposta: 'Sim' | 'Não' | 'N/A'
@@ -189,12 +222,18 @@ export interface Visita {
   pdr: Pdr
   numeroVisitas: number
   situacao: SituacaoId
+  /**
+   * Quantas vezes a visita já passou pela Central de Correção. Começa em 1 e
+   * só sobe quando a Operação devolve. É o que separa a 1ª da 2ª passagem no
+   * fluxo — sem isso, os cards da 2ª repetiam a contagem da 1ª.
+   */
+  rodada: number
   consultor: string
   lider: string
   liderFocal: string
   supervisor: string
   tipoVisita: 'PRESENCIAL' | 'REMOTA'
-  modalidade: '1H' | '2H' | '4H'
+  modalidade: '1H' | '2H' | '4H' | '8H'
   horaInicio: string
   horaFim: string
   duracao: string
@@ -203,6 +242,8 @@ export interface Visita {
   cincoEstrelas: boolean
   dadosVisita: DadosVisita
   acumulado: Acumulado
+  /** lançamentos manuais do acumulado da véspera */
+  diaAnterior: DiaAnterior[]
   procedimentos: Procedimento[]
   historico: RecebimentoMes[]
   cargas: Carga[]
@@ -227,12 +268,100 @@ export interface GrupoRateio {
   classificacao: Classificacao
 }
 
+/** cadastro fora de operação continua na base, mas não deve ser usado em coisa nova */
+export type SituacaoCadastro = 'Ativo' | 'Inativo'
+
+export const SITUACOES_CADASTRO: SituacaoCadastro[] = ['Ativo', 'Inativo']
+
+/** mantido pelo nome antigo onde já era usado para PDR */
+export type SituacaoPdr = SituacaoCadastro
+export const SITUACOES_PDR = SITUACOES_CADASTRO
+
+/* ================================================================= *
+ * Usuários e perfis de acesso
+ * ================================================================= */
+export const PERFIS = [
+  'Admin',
+  'Support',
+  'Information Analyst',
+  'Coordinator',
+  'Supervisor',
+  'Strategic Leader',
+  'Operational Leader',
+  'Auditor',
+  'Regional GR (Client)',
+  'RTV (Client)',
+  'Bayer SP (Client)',
+  'Operational Monitor',
+] as const
+
+export type Perfil = (typeof PERFIS)[number]
+
+/**
+ * Quem pode alterar os dados de dentro da visita. Os demais perfis abrem a
+ * visita normalmente e continuam podendo conversar no chat — o bloqueio é
+ * sobre o dado auditado, não sobre o acompanhamento.
+ */
+export const PERFIS_EDITAM_VISITA: readonly Perfil[] = [
+  'Admin',
+  'Strategic Leader',
+  'Operational Leader',
+  'Information Analyst',
+]
+
+export const podeEditarVisita = (perfil: Perfil): boolean =>
+  PERFIS_EDITAM_VISITA.includes(perfil)
+
+export interface Usuario {
+  id: string
+  nome: string
+  /** identificador de acesso — é por ele que a pessoa entra no sistema */
+  login: string
+  /**
+   * Definida pelo Admin. Guardada em texto puro porque ainda não existe
+   * back-end: quando houver, a senha some daqui e passa a ser um hash
+   * calculado no servidor, nunca trafegado nem gravado no navegador.
+   */
+  senha?: string
+  /** contato, todos opcionais */
+  email?: string
+  telefone?: string
+  cpf?: string
+  perfil: Perfil
+  situacao: SituacaoCadastro
+}
+
+/** tamanho mínimo exigido quando o Admin define uma senha */
+export const SENHA_MIN = 6
+
+/** só o Admin mexe em login e senha dos outros */
+export const podeDefinirCredenciais = (perfil: Perfil): boolean => perfil === 'Admin'
+
 /** Registro do catálogo de PDRs cadastrados */
 export interface PdrCatalogo {
+  /**
+   * Identificador interno e imutável do cadastro. Existe porque o CPF/CNPJ não
+   * serve de chave: a mesma inscrição aparece em unidades diferentes, e um
+   * documento digitado errado precisa poder ser corrigido sem soltar o
+   * histórico já vinculado à unidade.
+   */
+  id: string
   nome: string
+  /** aceita CPF (produtor pessoa física) ou CNPJ */
   cnpj: string
   cidade: string
   uf: string
+  situacao: SituacaoCadastro
+  /** coordenadas como digitadas, em grau decimal — vazio quando não informadas */
+  latitude?: string
+  longitude?: string
+  telefone?: string
+  email?: string
+  /**
+   * Recado da unidade. Aparece em toda visita vinculada a este cadastro, para
+   * o auditor não precisar descobrir de novo o que já se sabe do ponto.
+   */
+  observacao?: string
 }
 
 /** Linha importada da planilha de acumulado */
@@ -332,6 +461,10 @@ export interface ParametrosRegras {
   minDigitosPlaca: number
   /** salto tolerado entre romaneios consecutivos da mesma visita */
   saltoMaxRomaneio: number
+  /** teto por tecnologia num lançamento de Dia Anterior */
+  limiteDiaAnteriorTecnologia: number
+  /** minutos tolerados antes do início e depois do fim da janela da visita */
+  toleranciaHorarioMin: number
   /** faixa válida do número da caixa de fita teste */
   caixaFitaMin: number
   caixaFitaMax: number

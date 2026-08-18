@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
-import * as XLSX from 'xlsx'
+import { useRef, useState } from 'react'
 import { Modal } from './ui'
 import { IconAlerta, IconDownload, IconLixeira, IconPlanilha } from './icons'
 import type {
@@ -9,6 +8,7 @@ import type {
   SeveridadeAcumulado,
 } from '../types'
 import {
+  obterUsuarioLogado,
   acumuladoJaExiste,
   importarAcumulado,
   municipiosDoCnpj,
@@ -17,7 +17,6 @@ import {
   useVisita,
 } from '../store'
 import { situacaoPorId } from '../data/mock'
-import { USUARIO } from '../usuario'
 import { fmtKg } from '../format'
 
 const COLUNAS = [
@@ -53,7 +52,7 @@ function limpar(v: unknown): string {
 }
 
 function limparCnpj(v: string): string {
-  return v.replace(/[^\d./\-]/g, '')
+  return v.replace(/[^\d./-]/g, '')
 }
 
 function numero(v: unknown): number {
@@ -82,23 +81,24 @@ function parseData(valor: unknown): string {
   return s
 }
 
-function parseXlsx(file: File): Promise<Record<string, unknown>[]> {
+function lerArquivo(file: File): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target!.result as ArrayBuffer)
-        const wb = XLSX.read(data, { type: 'array' })
-        const ws = wb.Sheets[wb.SheetNames[0]]
-        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' }) as Record<string, unknown>[]
-        resolve(rows)
-      } catch (err) {
-        reject(err)
-      }
-    }
+    reader.onload = (e) => resolve(e.target!.result as ArrayBuffer)
     reader.onerror = () => reject(new Error('Erro ao ler arquivo.'))
     reader.readAsArrayBuffer(file)
   })
+}
+
+/**
+ * A biblioteca de planilha é grande e só serve aqui, então entra por import
+ * dinâmico: quem nunca importa um .xlsx não paga o download dela.
+ */
+async function parseXlsx(file: File): Promise<Record<string, unknown>[]> {
+  const [XLSX, buffer] = await Promise.all([import('xlsx'), lerArquivo(file)])
+  const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' })
+  const ws = wb.Sheets[wb.SheetNames[0]]
+  return XLSX.utils.sheet_to_json(ws, { defval: '' }) as Record<string, unknown>[]
 }
 
 function parseCsv(texto: string): Record<string, unknown>[] {
@@ -264,13 +264,17 @@ export default function ImportarAcumulado({ onClose }: { onClose: () => void }) 
   const pendentes = validas.filter((l) => l.severidade !== 'sucesso')
 
   const porSeveridade = (sev: SeveridadeAcumulado) => validas.filter((l) => l.severidade === sev)
-  const visiveis = porSeveridade(abaPreview)
 
-  // ao carregar um novo arquivo, abre direto na categoria mais urgente
-  useEffect(() => {
+  // ao carregar um novo arquivo, abre direto na categoria mais urgente. Ajustar
+  // durante o render evita o piscar de mostrar a aba antiga vazia antes do efeito
+  const [linhasDaAba, setLinhasDaAba] = useState(linhas)
+  if (linhas !== linhasDaAba) {
+    setLinhasDaAba(linhas)
     const primeira = ORDEM_SEVERIDADE.find((sev) => porSeveridade(sev).length > 0)
     if (primeira) setAbaPreview(primeira)
-  }, [linhas])
+  }
+
+  const visiveis = porSeveridade(abaPreview)
 
   async function processarArquivo(file: File) {
     setNomeArquivo(file.name)
@@ -513,7 +517,7 @@ export default function ImportarAcumulado({ onClose }: { onClose: () => void }) 
       )}
 
       {resultado && (
-        <ResultadoTabs resultado={resultado} naoIncluidas={naoIncluidas} importadoPor={USUARIO.nome} />
+        <ResultadoTabs resultado={resultado} naoIncluidas={naoIncluidas} importadoPor={obterUsuarioLogado().nome} />
       )}
 
       {gerandoMensagem && (

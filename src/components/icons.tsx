@@ -114,6 +114,13 @@ export const IconLixeira = ({ size = 15 }: Props) => (
   </svg>
 )
 
+export const IconMigrar = ({ size = 15 }: Props) => (
+  <svg {...base(size)}>
+    <path d="M7 7h11M14 3l4 4-4 4" />
+    <path d="M17 17H6M10 13l-4 4 4 4" />
+  </svg>
+)
+
 export const IconUpload = ({ size = 15 }: Props) => (
   <svg {...base(size)}>
     <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M12 3v13M7 8l5-5 5 5" />

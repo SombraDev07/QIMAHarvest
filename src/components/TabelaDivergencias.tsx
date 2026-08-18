@@ -3,7 +3,12 @@ import { Panel } from './ui'
 import { IconAlerta, IconEditar, IconFotos } from './icons'
 import EditarCarga from './EditarCarga'
 import { CORES_CLASSIFICACAO } from '../data/mock'
-import { gruposDeRateio, percentualDesconto, salvarCarga } from '../store'
+import {
+  gruposDeRateio,
+  percentualDesconto,
+  salvarCarga,
+  usePodeEditarVisita,
+} from '../store'
 import type { Carga, Visita } from '../types'
 import { severidadeDaCarga, type Alerta } from '../analise'
 import { fmtKg, fmtPct } from '../format'
@@ -23,16 +28,24 @@ export default function TabelaDivergencias({
   foco?: string | null
   onFocoConsumido?: () => void
 }) {
+  const podeEditar = usePodeEditarVisita()
   const [editando, setEditando] = useState<Carga | null>(null)
   const linhaFoco = useRef<HTMLTableRowElement | null>(null)
+
+  // o callback chega inline do pai, com identidade nova a cada render; guardar
+  // em ref mantém o efeito abaixo preso só ao foco
+  const consumirFoco = useRef(onFocoConsumido)
+  useEffect(() => {
+    consumirFoco.current = onFocoConsumido
+  })
 
   // ao chegar pela análise, rola até a carga e mantém o realce por alguns segundos
   useEffect(() => {
     if (!foco) return
     linhaFoco.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    const t = setTimeout(() => onFocoConsumido?.(), 6000)
+    const t = setTimeout(() => consumirFoco.current?.(), 6000)
     return () => clearTimeout(t)
-  }, [foco, onFocoConsumido])
+  }, [foco])
 
   const divergentes = useMemo(
     () => visita.cargas.filter((c) => (problemas.get(c.id)?.length ?? 0) > 0),
@@ -117,13 +130,17 @@ export default function TabelaDivergencias({
                       </td>
                       <td className="obs" style={{ maxWidth: 320 }}>
                         {alertasCarga.map((a) => (
-                          <div
-                            key={a.id}
-                            className={`tag-problema tag-problema--${a.severidade}`}
-                            style={{ marginBottom: 4 }}
-                            title={`${a.detalhe} · Responsável: ${a.responsavel === 'operacao' ? 'Operação' : 'Analista'}`}
-                          >
-                            <IconAlerta size={12} /> {a.regra}
+                          <div key={a.id} className="divergencia">
+                            <span className={`tag-problema tag-problema--${a.severidade}`}>
+                              <IconAlerta size={12} /> {a.regra}
+                            </span>
+                            {/* o detalhe é o que o analista precisa para agir: texto
+                                visível, não tooltip — tooltip não existe em toque,
+                                não é copiável e não entra na busca da página */}
+                            <span className="divergencia__detalhe">{a.detalhe}</span>
+                            <span className="divergencia__responsavel">
+                              Responsável: {a.responsavel === 'operacao' ? 'Operação' : 'Analista'}
+                            </span>
                           </div>
                         ))}
                       </td>
@@ -141,7 +158,8 @@ export default function TabelaDivergencias({
                           <button
                             className="btn btn--ghost btn--sm btn--icon"
                             type="button"
-                            title="Editar carga"
+                            title={podeEditar ? 'Editar carga' : 'Seu perfil abre a visita em leitura'}
+                            disabled={!podeEditar}
                             onClick={() => setEditando(c)}
                           >
                             <IconEditar />

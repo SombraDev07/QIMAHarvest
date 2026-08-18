@@ -7,9 +7,14 @@ import {
   IconRelatorios,
   IconRotas,
   IconSolicitacao,
+  IconUpload,
   IconVisitas,
 } from './icons'
-import { USUARIO, iniciais } from '../usuario'
+import { iniciais } from '../usuario'
+import MinhaSenha from './MinhaSenha'
+import SeletorIdioma from './SeletorIdioma'
+import { useT } from '../i18n'
+import { useFalhaPersistencia, useUsuarioLogado } from '../store'
 
 const ABAS = [
   { to: '/administracao', label: 'Administração', Icone: IconAdmin },
@@ -20,10 +25,14 @@ const ABAS = [
   { to: '/relatorios', label: 'Relatórios', Icone: IconRelatorios },
   { to: '/analise-fotos', label: 'Análise de Fotos', Icone: IconFotos },
   { to: '/solicitacoes', label: 'Solicitações', Icone: IconSolicitacao },
+  { to: '/importar-visitas', label: 'Importar planilha', Icone: IconUpload },
 ]
 
 
 export default function Layout() {
+  const usuario = useUsuarioLogado()
+  const t = useT()
+  const falhaAoGravar = useFalhaPersistencia()
   return (
     <div className="app">
       <header className="topbar">
@@ -39,13 +48,21 @@ export default function Layout() {
         <div className="topbar__chip">SAFRA 2025/2026 · BRASIL</div>
 
         <div className="user">
-          <div className="user__avatar">{iniciais(USUARIO.nome)}</div>
+          <div className="user__avatar">{iniciais(usuario.nome)}</div>
           <div className="user__name">
-            {USUARIO.nome}
-            <div className="user__role">{USUARIO.papel}</div>
+            {usuario.nome}
+            <div className="user__role">{usuario.perfil}</div>
           </div>
+          <MinhaSenha />
+          <SeletorIdioma />
         </div>
       </header>
+
+      {falhaAoGravar && (
+        <div className="faixa-falha" role="alert">
+          <strong>Alterações não estão sendo salvas.</strong> {falhaAoGravar}
+        </div>
+      )}
 
       <nav className="nav">
         {ABAS.map(({ to, label, Icone }) => (
@@ -55,7 +72,7 @@ export default function Layout() {
             className={({ isActive }) => `nav__link${isActive ? ' is-active' : ''}`}
           >
             <Icone />
-            {label}
+            {t(label)}
           </NavLink>
         ))}
       </nav>

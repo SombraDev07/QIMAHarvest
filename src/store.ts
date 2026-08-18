@@ -1,7 +1,19 @@
 import { useSyncExternalStore } from 'react'
-import { VISITAS_INICIAIS, PDRS_CATALOGO_INICIAIS, SOLICITACOES_INICIAIS } from './data/mock'
+import {
+  VISITAS_INICIAIS,
+  PDRS_CATALOGO_INICIAIS,
+  SOLICITACOES_INICIAIS,
+  USUARIOS_INICIAIS,
+  reservarIdCarga,
+} from './data/mock'
 import { regrasAtivasPadrao } from './regras'
-import { USUARIO } from './usuario'
+import {
+  mascaraCpfCnpj,
+  mascaraPlaca,
+  mascaraProdutor,
+  mascaraRomaneio,
+  normalizarHora,
+} from './format'
 import {
   CAIXA_FITA_MAX,
   CAIXA_FITA_MIN,
@@ -11,6 +23,7 @@ import {
   type Carga,
   type Classificacao,
   type DadosVisita,
+  type DiaAnterior,
   type DetalheAcumuladoImportado,
   type ErroLiberado,
   type GrupoRateio,
@@ -20,20 +33,234 @@ import {
   type RelatorioAcumulado,
   type Solicitacao,
   type StatusSolicitacao,
+  type SimNao,
   type SituacaoId,
+  type SituacaoPdr,
   type TipoSolicitacao,
+  type Usuario,
   type Visita,
+  SENHA_MIN,
+  podeDefinirCredenciais,
+  podeEditarVisita,
 } from './types'
 
 /* ------------------------------------------------------------------ *
  * Store em memória. Substituir estas funções por chamadas HTTP quando
  * houver API — a camada de telas não muda.
  * ------------------------------------------------------------------ */
-let estado: Visita[] = VISITAS_INICIAIS
+/* ------------------------------------------------------------------ *
+ * Persistência local. Sem isto um F5 no meio de uma correção joga fora
+ * o trabalho do analista. Enquanto não existe API, o localStorage
+ * segura o estado entre sessões.
+ * ------------------------------------------------------------------ */
+const CHAVE_PERSISTENCIA = 'qima-harvest/estado'
+/** subir a versão descarta o que estava salvo, em vez de arriscar ler um formato antigo */
+const VERSAO_PERSISTENCIA = 1
+/** tempo sem novas alterações antes de gravar — evita serializar a cada tecla */
+const ATRASO_GRAVACAO_MS = 500
+
+interface EstadoPersistido {
+  versao: number
+  /**
+   * só as visitas que o usuário mexeu, não a base inteira. Gravar as 261
+   * passaria de 5 MB e estouraria a cota de localStorage — a gravação falharia
+   * calada e o analista acharia que o trabalho estava salvo. De quebra, manter
+   * o resto vindo da base deixa uma atualização dos dados originais chegar a
+   * quem já tem storage.
+   */
+  visitas: Visita[]
+  parametros: ParametrosRegras
+  pdrs: PdrCatalogo[]
+  solicitacoes: Solicitacao[]
+  usuarios: Usuario[]
+  usuarioLogadoId: string
+  /**
+   * true depois de uma importação em lote: a base de demonstração deixa de ser
+   * a origem e só valem as visitas gravadas. Sem esta marca, o reload traria
+   * as visitas do gerador de volta e elas se somariam às importadas.
+   */
+  baseSubstituida?: boolean
+}
+
+const temArmazenamento = () => {
+  try {
+    return typeof localStorage !== 'undefined'
+  } catch {
+    return false
+  }
+}
+
+function lerPersistido(): EstadoPersistido | null {
+  if (!temArmazenamento()) return null
+  try {
+    const cru = localStorage.getItem(CHAVE_PERSISTENCIA)
+    if (!cru) return null
+    const dados = JSON.parse(cru) as EstadoPersistido
+    return dados?.versao === VERSAO_PERSISTENCIA ? dados : null
+  } catch {
+    // JSON corrompido ou storage bloqueado: cair para os dados iniciais é
+    // melhor que subir a tela quebrada
+    return null
+  }
+}
+
+const persistido = lerPersistido()
+
+let gravacaoAgendada: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * Um anexo é gravado como object URL (`blob:`), que só vale enquanto o
+ * documento vive. Depois do reload o link estaria morto, então a mensagem
+ * volta sem o anexo em vez de voltar com um link quebrado.
+ */
+const semAnexosMortos = (lista: Solicitacao[]): Solicitacao[] =>
+  lista.map((s) => ({
+    ...s,
+    mensagens: s.mensagens.map((m) =>
+      m.anexos.some((a) => a.url.startsWith('blob:')) ? { ...m, anexos: [] } : m,
+    ),
+  }))
+
+/**
+ * Última falha de gravação. Existe porque engolir o erro em silêncio é o pior
+ * dos mundos: o analista continua trabalhando achando que está salvo e perde
+ * tudo no F5. A tela mostra o aviso; o app segue funcionando em memória.
+ */
+let falhaPersistencia: string | null = null
+const ouvintesFalha = new Set<() => void>()
+
+export function useFalhaPersistencia(): string | null {
+  return useSyncExternalStore(
+    (fn) => {
+      ouvintesFalha.add(fn)
+      return () => ouvintesFalha.delete(fn)
+    },
+    () => falhaPersistencia,
+    () => falhaPersistencia,
+  )
+}
+
+function registrarFalha(mensagem: string | null) {
+  if (falhaPersistencia === mensagem) return
+  falhaPersistencia = mensagem
+  ouvintesFalha.forEach((fn) => fn())
+}
+
+/** tamanho do que seria gravado agora, para a tela mostrar quanto já se usa */
+export function tamanhoPersistido(): number {
+  try {
+    return localStorage.getItem(CHAVE_PERSISTENCIA)?.length ?? 0
+  } catch {
+    return 0
+  }
+}
+
+function agendarGravacao() {
+  if (!temArmazenamento()) return
+  clearTimeout(gravacaoAgendada)
+  gravacaoAgendada = setTimeout(() => {
+    const dados: EstadoPersistido = {
+      versao: VERSAO_PERSISTENCIA,
+      visitas: estado.filter((v) => visitasAlteradas.has(v.cod)),
+      parametros,
+      pdrs: pdrsCatalogo,
+      solicitacoes,
+      usuarios,
+      usuarioLogadoId,
+      baseSubstituida,
+    }
+
+    try {
+      localStorage.setItem(CHAVE_PERSISTENCIA, JSON.stringify(dados))
+      registrarFalha(null)
+    } catch (e) {
+      const cota = e instanceof DOMException && /quota/i.test(e.name)
+      const bytes = JSON.stringify(dados).length
+      const tamanho =
+        bytes < 1024 * 1024
+          ? `${Math.round(bytes / 1024)} KB`
+          : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+      registrarFalha(
+        cota
+          ? `O navegador recusou gravar ${tamanho} — a cota de armazenamento estourou. As alterações desta sessão continuam na tela, mas serão perdidas ao recarregar.`
+          : 'Não foi possível gravar no navegador (modo privativo ou armazenamento bloqueado). As alterações serão perdidas ao recarregar.',
+      )
+    }
+  }, ATRASO_GRAVACAO_MS)
+}
+
+/** Administração → volta a base para os dados originais */
+export function limparPersistencia() {
+  if (!temArmazenamento()) return
+  try {
+    clearTimeout(gravacaoAgendada)
+    localStorage.removeItem(CHAVE_PERSISTENCIA)
+  } catch {
+    // nada a fazer: sem storage não há o que limpar
+  }
+}
+
+/**
+ * Passa a base pelas mesmas máscaras do formulário e da importação, para que
+ * carga antiga e carga nova sigam a mesma regra. Só normaliza texto: peso e
+ * data ficam intactos, porque alterá-los mudaria o resultado da análise em vez
+ * de padronizar a digitação.
+ */
+function normalizarCarga(c: Carga): Carga {
+  return {
+    ...c,
+    hora: normalizarHora(c.hora) ?? c.hora,
+    placa: mascaraPlaca(c.placa),
+    produtor: mascaraProdutor(c.produtor),
+    romaneio: mascaraRomaneio(c.romaneio),
+    cpfCnpjProdutor: mascaraCpfCnpj(c.cpfCnpjProdutor),
+  }
+}
+
+/** cods que o usuário alterou nesta máquina — é só isso que vai para o storage */
+const visitasAlteradas = new Set<number>((persistido?.visitas ?? []).map((v) => v.cod))
+
+/**
+ * A base vem do mock; por cima dela entram as visitas alteradas que estavam no
+ * storage, e depois as que foram criadas do zero. As máscaras são idempotentes,
+ * então aplicá-las aos dois lados é seguro.
+ */
+let baseSubstituida = persistido?.baseSubstituida ?? false
+
+function montarEstadoInicial(): Visita[] {
+  const normalizar = (v: Visita): Visita => ({
+    ...v,
+    diaAnterior: v.diaAnterior ?? [],
+    cargas: v.cargas.map(normalizarCarga),
+  })
+
+  // base substituída: o gerador não entra mais, nem para completar
+  if (baseSubstituida) return (persistido?.visitas ?? []).map(normalizar)
+
+  const salvas = new Map((persistido?.visitas ?? []).map((v) => [v.cod, v]))
+  const daBase = VISITAS_INICIAIS.map((v) => salvas.get(v.cod) ?? v)
+  const codsDaBase = new Set(VISITAS_INICIAIS.map((v) => v.cod))
+  const criadas = [...salvas.values()].filter((v) => !codsDaBase.has(v.cod))
+  return [...daBase, ...criadas].map(normalizar)
+}
+
+let estado: Visita[] = montarEstadoInicial()
 const ouvintes = new Set<() => void>()
+
+/** o maior sufixo numérico de ids como "MSG-LOCAL-12", para a sequência continuar dali */
+const maiorSufixo = (ids: string[]) =>
+  ids.reduce((max, id) => {
+    const n = Number(id.split('-').pop())
+    return Number.isFinite(n) ? Math.max(max, n) : max
+  }, 0)
+
+// contadores reiniciam a cada carga da página; sem realinhá-los com o que veio
+// do storage, ids novos colidiriam com registros já existentes
+estado.forEach((v) => v.cargas.forEach((c) => reservarIdCarga(c.id)))
 
 function notificar() {
   ouvintes.forEach((fn) => fn())
+  agendarGravacao()
 }
 
 function subscrever(fn: () => void) {
@@ -51,9 +278,29 @@ export function useVisita(cod: number): Visita | undefined {
   return useVisitas().find((v) => v.cod === cod)
 }
 
+/** leitura fora de componente (ex.: testes) — nas telas use useVisita */
+export function obterVisita(cod: number): Visita | undefined {
+  return estado.find((v) => v.cod === cod)
+}
+
 function alterarVisita(cod: number, fn: (v: Visita) => Visita) {
-  estado = estado.map((v) => (v.cod === cod ? fn(v) : v))
+  estado = estado.map((v) => (v.cod === cod ? ajustarRecebimento(fn(v)) : v))
+  visitasAlteradas.add(cod)
   notificar()
+}
+
+/**
+ * 2.2 — houve recebimento só quando existe carga acompanhada. Visita só com
+ * não acompanhadas (ou sem carga) não é recebimento de soja.
+ */
+function ajustarRecebimento(v: Visita): Visita {
+  const temAcompanhada = v.cargas.some((c) => c.acompanhada)
+  const esperado: SimNao = temAcompanhada ? 'Sim' : 'Não'
+  if (temAcompanhada || v.cargas.length > 0) {
+    if (v.dadosVisita.recebimentoCargas === esperado) return v
+    return { ...v, dadosVisita: { ...v.dadosVisita, recebimentoCargas: esperado } }
+  }
+  return v
 }
 
 /* ------------------------------------------------------------------ *
@@ -65,6 +312,87 @@ export function salvarDadosVisita(cod: number, patch: Partial<DadosVisita>) {
 
 export function salvarAcumulado(cod: number, patch: Partial<Acumulado>) {
   alterarVisita(cod, (v) => ({ ...v, acumulado: { ...v.acumulado, ...patch } }))
+}
+
+/**
+ * A tabela de Dia Anterior é derivada dos dias anteriores à visita: um dia por
+ * linha, já completa desde o início. O storage guarda só o que o auditor
+ * mexeu, indexado pela data — daí o upsert. Assim não há como criar duas
+ * linhas para o mesmo dia pela tela.
+ */
+const ZERADO: Record<Classificacao, number> = {
+  Negativa: 0,
+  Declarada: 0,
+  Positiva: 0,
+  Participante: 0,
+}
+
+function upsertDiaAnterior(
+  lista: DiaAnterior[],
+  cod: number,
+  data: string,
+  patch: Partial<Omit<DiaAnterior, 'id' | 'data'>>,
+): DiaAnterior[] {
+  const existente = lista.find((d) => d.data === data)
+  if (existente) {
+    return lista.map((d) => (d.data === data ? { ...d, ...patch } : d))
+  }
+  return [
+    ...lista,
+    {
+      id: `DA-${cod}-${data.replace(/\//g, '')}`,
+      data,
+      informouDiaAnterior: 'Não',
+      valores: ZERADO,
+      ...patch,
+    },
+  ]
+}
+
+/**
+ * Voltar para "Não" zera as tecnologias: o padrão de um dia não informado é
+ * 0/0/0/0, e deixar valor para trás guardaria um número que a tela não mostra.
+ */
+export function definirInformouDiaAnterior(cod: number, data: string, informou: SimNao) {
+  alterarVisita(cod, (v) => ({
+    ...v,
+    diaAnterior: upsertDiaAnterior(v.diaAnterior, cod, data, {
+      informouDiaAnterior: informou,
+      ...(informou === 'Não' ? { valores: ZERADO } : {}),
+    }),
+  }))
+}
+
+export function salvarDiaAnterior(
+  cod: number,
+  data: string,
+  valores: Record<Classificacao, number>,
+) {
+  alterarVisita(cod, (v) => ({
+    ...v,
+    diaAnterior: upsertDiaAnterior(v.diaAnterior, cod, data, { valores }),
+  }))
+}
+
+/** o registro do dia, ou o padrão não-informado quando o auditor ainda não mexeu */
+export function diaAnteriorDe(visita: Visita, data: string): DiaAnterior {
+  return (
+    visita.diaAnterior.find((d) => d.data === data) ?? {
+      id: `DA-${visita.cod}-${data.replace(/\//g, '')}`,
+      data,
+      informouDiaAnterior: 'Não',
+      valores: ZERADO,
+    }
+  )
+}
+
+/**
+ * Visita daquela unidade naquele dia — é o que permite clicar numa linha do
+ * histórico e abrir o registro correspondente. Devolve undefined quando não
+ * existe visita para o par CNPJ/data.
+ */
+export function visitaPorCnpjEData(cnpj: string, data: string): Visita | undefined {
+  return estado.find((v) => v.pdr.cnpj === cnpj && v.data === data)
 }
 
 /**
@@ -86,13 +414,34 @@ function sincronizarGrupo(cargas: Carga[], referencia: Carga): Carga[] {
   )
 }
 
+/**
+ * Grupo que ficou com uma única carga deixa de ser rateio — rateio só faz
+ * sentido a partir de duas. Aplicado ao grupo de origem quando uma carga sai
+ * dele (por exclusão ou por "Rateio: Não"), nunca ao grupo recém-criado, que
+ * legitimamente começa com uma carga só à espera da segunda.
+ */
+function dissolverGrupoUnitario(cargas: Carga[], grupoId: string): Carga[] {
+  if (cargas.filter((c) => c.grupoRateio === grupoId).length !== 1) return cargas
+  return cargas.map((c) =>
+    c.grupoRateio === grupoId ? { ...c, rateio: false, grupoRateio: undefined } : c,
+  )
+}
+
 export function salvarCarga(cod: number, carga: Carga) {
   alterarVisita(cod, (v) => {
-    const existe = v.cargas.some((c) => c.id === carga.id)
-    const base = existe
+    const anterior = v.cargas.find((c) => c.id === carga.id)
+    const base = anterior
       ? v.cargas.map((c) => (c.id === carga.id ? carga : c))
       : [...v.cargas, carga]
-    return { ...v, cargas: sincronizarGrupo(base, carga) }
+    const cargas = sincronizarGrupo(base, carga)
+    const origem = anterior?.grupoRateio
+    return {
+      ...v,
+      cargas:
+        origem && origem !== carga.grupoRateio
+          ? dissolverGrupoUnitario(cargas, origem)
+          : cargas,
+    }
   })
 }
 
@@ -108,18 +457,14 @@ export function adicionarCargas(cod: number, novas: Carga[]) {
 
 export function excluirCarga(cod: number, cargaId: string) {
   alterarVisita(cod, (v) => {
+    const alvo = v.cargas.find((c) => c.id === cargaId)
     const restantes = v.cargas.filter((c) => c.id !== cargaId)
-    // grupo de rateio que ficou com uma única carga deixa de ser rateio
-    const contagem = new Map<string, number>()
-    restantes.forEach((c) => {
-      if (c.grupoRateio) contagem.set(c.grupoRateio, (contagem.get(c.grupoRateio) ?? 0) + 1)
-    })
-    const cargas = restantes.map((c) =>
-      c.grupoRateio && contagem.get(c.grupoRateio) === 1
-        ? { ...c, rateio: false, grupoRateio: undefined }
-        : c,
-    )
-    return { ...v, cargas }
+    return {
+      ...v,
+      cargas: alvo?.grupoRateio
+        ? dissolverGrupoUnitario(restantes, alvo.grupoRateio)
+        : restantes,
+    }
   })
 }
 
@@ -127,10 +472,42 @@ export function excluirCargas(cod: number, ids: string[]) {
   ids.forEach((id) => excluirCarga(cod, id))
 }
 
+/**
+ * Move cargas entre acompanhadas e não acompanhadas. Se só parte de um rateio
+ * muda de lado, essas cargas saem do grupo — o caminhão não pode ficar partido
+ * nas duas abas. O grupo inteiro migrando permanece rateio.
+ */
+export function migrarCargas(cod: number, ids: string[], acompanhada: boolean) {
+  const idSet = new Set(ids)
+  alterarVisita(cod, (v) => {
+    const gruposParciais = new Set<string>()
+    for (const c of v.cargas) {
+      if (!c.grupoRateio || !idSet.has(c.id)) continue
+      const membros = v.cargas.filter((x) => x.grupoRateio === c.grupoRateio)
+      if (!membros.every((x) => idSet.has(x.id))) gruposParciais.add(c.grupoRateio)
+    }
+
+    const cargas = v.cargas.map((c) => {
+      if (!idSet.has(c.id)) return c
+      const next = { ...c, acompanhada }
+      if (c.grupoRateio && gruposParciais.has(c.grupoRateio)) {
+        return { ...next, rateio: false, grupoRateio: undefined }
+      }
+      return next
+    })
+
+    let resultado = cargas
+    for (const grupo of gruposParciais) {
+      resultado = dissolverGrupoUnitario(resultado, grupo)
+    }
+    return { ...v, cargas: resultado }
+  })
+}
+
 /* ------------------------------------------------------------------ *
  * Conversa e fluxo da visita
  * ------------------------------------------------------------------ */
-let sequenciaMensagem = 0
+let sequenciaMensagem = maiorSufixo(estado.flatMap((v) => v.mensagens.map((m) => m.id)))
 
 function novaMensagem(
   texto: string,
@@ -139,8 +516,8 @@ function novaMensagem(
 ): Mensagem {
   return {
     id: `MSG-LOCAL-${++sequenciaMensagem}`,
-    autor: tipo === 'sistema' ? 'Sistema' : USUARIO.nome,
-    papel: tipo === 'sistema' ? 'Registro automático' : USUARIO.papel,
+    autor: tipo === 'sistema' ? 'Sistema' : obterUsuarioLogado().nome,
+    papel: tipo === 'sistema' ? 'Registro automático' : obterUsuarioLogado().perfil,
     texto,
     ts: Date.now(),
     tipo,
@@ -162,7 +539,7 @@ function registrarSistema(v: Visita, texto: string): Visita {
 export function registrarValidacao(cod: number, erros: number, atencoes: number) {
   alterarVisita(cod, (v) =>
     registrarSistema(
-      { ...v, ultimaValidacao: { por: USUARIO.nome, ts: Date.now(), erros, atencoes } },
+      { ...v, ultimaValidacao: { por: obterUsuarioLogado().nome, ts: Date.now(), erros, atencoes } },
       erros === 0 && atencoes === 0
         ? 'Validação executada: nenhuma inconsistência encontrada.'
         : `Validação executada: ${erros} erro(s) e ${atencoes} ponto(s) de atenção. Detalhes na aba Análise.`,
@@ -171,24 +548,38 @@ export function registrarValidacao(cod: number, erros: number, atencoes: number)
 }
 
 /** Enviar para operação — devolve a visita ao time de campo */
-export function enviarParaOperacao(cod: number, motivo: string) {
+export function enviarParaOperacao(cod: number) {
   alterarVisita(cod, (v) =>
     registrarSistema(
-      { ...v, situacao: 'operacao-correcao', motivo },
-      `Visita devolvida à Operação por ${USUARIO.nome}. Motivo: ${motivo}`,
+      { ...v, situacao: 'operacao-correcao' },
+      `Visita enviada à Operação por ${obterUsuarioLogado().nome}.`,
     ),
   )
 }
 
 /** Certificar — grava as liberações de erro e fecha a visita */
+/**
+ * Operação devolve a visita para a Central. É esta transição que caracteriza a
+ * segunda passagem — e ela não existia: o fluxo desenhava quatro etapas, mas o
+ * código só sabia ir da Central para a Operação e certificar.
+ */
+export function devolverParaCentral(cod: number) {
+  alterarVisita(cod, (v) =>
+    registrarSistema(
+      { ...v, situacao: 'central-correcao', rodada: v.rodada + 1 },
+      `Visita enviada à Central por ${obterUsuarioLogado().nome}.`,
+    ),
+  )
+}
+
 export function certificarVisita(cod: number, liberacoes: Omit<ErroLiberado, 'por' | 'ts'>[]) {
   const ts = Date.now()
-  const novas: ErroLiberado[] = liberacoes.map((l) => ({ ...l, por: USUARIO.nome, ts }))
+  const novas: ErroLiberado[] = liberacoes.map((l) => ({ ...l, por: obterUsuarioLogado().nome, ts }))
 
   alterarVisita(cod, (v) => {
     const texto = novas.length
-      ? `Visita certificada por ${USUARIO.nome} com ${novas.length} erro(s) liberado(s) mediante justificativa.`
-      : `Visita certificada por ${USUARIO.nome} sem pendências.`
+      ? `Visita certificada por ${obterUsuarioLogado().nome} com ${novas.length} erro(s) liberado(s) mediante justificativa.`
+      : `Visita certificada por ${obterUsuarioLogado().nome} sem pendências.`
     return registrarSistema(
       { ...v, situacao: 'certificada', errosLiberados: [...v.errosLiberados, ...novas] },
       texto,
@@ -233,11 +624,184 @@ export const percentualDesconto = (c: Carga): number =>
 /* ------------------------------------------------------------------ *
  * Catálogo de PDRs
  * ------------------------------------------------------------------ */
-let pdrsCatalogo: PdrCatalogo[] = PDRS_CATALOGO_INICIAIS
+/* ------------------------------------------------------------------ *
+ * Usuários e sessão. O usuário logado fica aqui (e não numa constante de
+ * módulo) porque o perfil dele decide o que a visita deixa editar — trocar
+ * de usuário precisa repintar a tela.
+ * ------------------------------------------------------------------ */
+let usuarios: Usuario[] = persistido?.usuarios ?? USUARIOS_INICIAIS
+let usuarioLogadoId: string = persistido?.usuarioLogadoId ?? usuarios[0].id
+const ouvintesUsuarios = new Set<() => void>()
+
+function notificarUsuarios() {
+  ouvintesUsuarios.forEach((fn) => fn())
+  agendarGravacao()
+}
+
+const assinarUsuarios = (fn: () => void) => {
+  ouvintesUsuarios.add(fn)
+  return () => ouvintesUsuarios.delete(fn)
+}
+
+export function useUsuarios(): Usuario[] {
+  return useSyncExternalStore(assinarUsuarios, () => usuarios, () => usuarios)
+}
+
+/** o usuário logado sempre existe: se o cadastro sumir, cai no primeiro da lista */
+function calcularLogado(): Usuario {
+  return usuarios.find((u) => u.id === usuarioLogadoId) ?? usuarios[0]
+}
+
+let logadoCache = calcularLogado()
+
+export function useUsuarioLogado(): Usuario {
+  return useSyncExternalStore(assinarUsuarios, () => logadoCache, () => logadoCache)
+}
+
+/** leitura fora de componente (ex.: testes) — nas telas use useUsuarios */
+export function obterUsuarios(): Usuario[] {
+  return usuarios
+}
+
+export function obterUsuarioLogado(): Usuario {
+  return logadoCache
+}
+
+/** o perfil do usuário logado libera ou não a edição dos dados da visita */
+export function usePodeEditarVisita(): boolean {
+  return podeEditarVisita(useUsuarioLogado().perfil)
+}
+
+function atualizarLogado() {
+  logadoCache = calcularLogado()
+}
+
+export function entrarComo(id: string) {
+  if (!usuarios.some((u) => u.id === id)) return
+  usuarioLogadoId = id
+  atualizarLogado()
+  notificarUsuarios()
+}
+
+function proximoIdUsuario(): string {
+  const maior = usuarios.reduce((max, u) => {
+    const n = Number(u.id.split('-').pop())
+    return Number.isFinite(n) ? Math.max(max, n) : max
+  }, 0)
+  return `U-${String(maior + 1).padStart(3, '0')}`
+}
+
+export function adicionarUsuario(dados: Omit<Usuario, 'id'>): Usuario {
+  const novo: Usuario = { ...dados, id: proximoIdUsuario() }
+  usuarios = [...usuarios, novo]
+  atualizarLogado()
+  notificarUsuarios()
+  return novo
+}
+
+export function atualizarUsuario(id: string, patch: Partial<Omit<Usuario, 'id'>>) {
+  usuarios = usuarios.map((u) => (u.id === id ? { ...u, ...patch } : u))
+  atualizarLogado()
+  notificarUsuarios()
+}
+
+export function removerUsuario(id: string) {
+  // sem usuário não há sessão: o último cadastro não pode ser apagado
+  if (usuarios.length <= 1) return false
+  usuarios = usuarios.filter((u) => u.id !== id)
+  if (usuarioLogadoId === id) usuarioLogadoId = usuarios[0].id
+  atualizarLogado()
+  notificarUsuarios()
+  return true
+}
+
+export function emailJaCadastrado(email: string, ignorarId?: string): boolean {
+  const alvo = email.trim().toLowerCase()
+  if (!alvo) return false
+  return usuarios.some((u) => (u.email ?? '').toLowerCase() === alvo && u.id !== ignorarId)
+}
+
+/** o login identifica a conta, então não pode repetir; comparação sem caixa */
+export function loginJaCadastrado(login: string, ignorarId?: string): boolean {
+  const alvo = login.trim().toLowerCase()
+  if (!alvo) return false
+  return usuarios.some((u) => u.login.toLowerCase() === alvo && u.id !== ignorarId)
+}
+
+/**
+ * Login e senha são alterados à parte do resto do cadastro porque só o Admin
+ * pode mexer neles — a checagem de perfil fica aqui, e não só na tela.
+ */
+export function definirCredenciais(id: string, login: string, senha?: string): boolean {
+  if (!podeDefinirCredenciais(obterUsuarioLogado().perfil)) return false
+
+  usuarios = usuarios.map((u) =>
+    u.id === id
+      ? { ...u, login: login.trim(), ...(senha === undefined ? {} : { senha: senha || undefined }) }
+      : u,
+  )
+  atualizarLogado()
+  notificarUsuarios()
+  return true
+}
+
+/**
+ * Troca da própria senha. Diferente de definirCredenciais, não exige Admin —
+ * mas exige a senha atual, para que quem passe por uma sessão esquecida aberta
+ * não consiga trancar a conta do dono. Quem ainda não tem senha define a
+ * primeira sem informar nada.
+ */
+export function alterarMinhaSenha(atual: string, nova: string): { ok: boolean; erro?: string } {
+  const usuario = obterUsuarioLogado()
+
+  if (usuario.senha && usuario.senha !== atual) {
+    return { ok: false, erro: 'Senha atual não confere.' }
+  }
+  if (nova.length < SENHA_MIN) {
+    return { ok: false, erro: `A nova senha precisa de pelo menos ${SENHA_MIN} caracteres.` }
+  }
+  if (usuario.senha && nova === usuario.senha) {
+    return { ok: false, erro: 'A nova senha é igual à atual.' }
+  }
+
+  usuarios = usuarios.map((u) => (u.id === usuario.id ? { ...u, senha: nova } : u))
+  atualizarLogado()
+  notificarUsuarios()
+  return { ok: true }
+}
+
+/** compara só os dígitos: o mesmo CPF pode ter sido digitado com e sem pontuação */
+export function cpfJaCadastrado(cpf: string, ignorarId?: string): boolean {
+  const alvo = cpf.replace(/\D/g, '')
+  if (!alvo) return false
+  return usuarios.some((u) => (u.cpf ?? '').replace(/\D/g, '') === alvo && u.id !== ignorarId)
+}
+
+/* ------------------------------------------------------------------ *
+ * Catálogo de PDRs
+ * ------------------------------------------------------------------ */
+/** o primeiro cadastro nasce com 9 dígitos, como no cadastro corporativo */
+const ID_PDR_INICIAL = 100000001
+
+/** estado gravado antes do id existir recebe um na subida, sem perder cadastro */
+function normalizarCatalogo(lista: PdrCatalogo[]): PdrCatalogo[] {
+  let proximo = ID_PDR_INICIAL
+  const usados = new Set(lista.map((p) => p.id).filter(Boolean))
+  return lista.map((p) => {
+    if (p.id) return p
+    while (usados.has(String(proximo))) proximo++
+    const id = String(proximo++)
+    usados.add(id)
+    return { ...p, id }
+  })
+}
+
+let pdrsCatalogo: PdrCatalogo[] = normalizarCatalogo(persistido?.pdrs ?? PDRS_CATALOGO_INICIAIS)
 const ouvintesPdr = new Set<() => void>()
 
 function notificarPdr() {
   ouvintesPdr.forEach((fn) => fn())
+  agendarGravacao()
 }
 
 export function usePdrsCatalogo(): PdrCatalogo[] {
@@ -248,16 +812,96 @@ export function usePdrsCatalogo(): PdrCatalogo[] {
   )
 }
 
-export function adicionarPdr(pdr: PdrCatalogo) {
-  if (pdrsCatalogo.some((p) => p.cnpj === pdr.cnpj)) return false
-  pdrsCatalogo = [...pdrsCatalogo, pdr]
-  notificarPdr()
-  return true
+/** leitura fora de componente (ex.: testes) — nas telas use usePdrsCatalogo */
+export function obterPdrsCatalogo(): PdrCatalogo[] {
+  return pdrsCatalogo
 }
 
-export function removerPdr(cnpj: string) {
-  pdrsCatalogo = pdrsCatalogo.filter((p) => p.cnpj !== cnpj)
+/**
+ * Próximo id a partir do maior já usado — nunca de um contador de módulo, que
+ * reiniciaria a cada carga da página e colidiria com o que veio do storage.
+ */
+function proximoIdPdr(): string {
+  const maior = pdrsCatalogo.reduce((max, p) => {
+    const n = Number(p.id)
+    return Number.isFinite(n) ? Math.max(max, n) : max
+  }, ID_PDR_INICIAL - 1)
+  return String(maior + 1)
+}
+
+/** true quando já existe outro cadastro com o mesmo documento — aviso, não bloqueio */
+export function documentoJaCadastrado(cnpj: string, ignorarId?: string): boolean {
+  return pdrsCatalogo.some((p) => p.cnpj === cnpj && p.id !== ignorarId)
+}
+
+/** o id é do sistema: quem chama informa só os dados do cadastro */
+export function adicionarPdr(dados: Omit<PdrCatalogo, 'id'>): PdrCatalogo {
+  const novo: PdrCatalogo = { ...dados, id: proximoIdPdr() }
+  pdrsCatalogo = [...pdrsCatalogo, novo]
   notificarPdr()
+  return novo
+}
+
+/**
+ * Edição por id, e não por documento: é justamente o CPF/CNPJ que pode estar
+ * errado e precisar de correção.
+ */
+export function atualizarPdr(id: string, patch: Partial<Omit<PdrCatalogo, 'id'>>) {
+  pdrsCatalogo = pdrsCatalogo.map((p) => (p.id === id ? { ...p, ...patch } : p))
+  notificarPdr()
+}
+
+export function removerPdr(id: string) {
+  pdrsCatalogo = pdrsCatalogo.filter((p) => p.id !== id)
+  notificarPdr()
+}
+
+/** ativa/inativa sem tirar do catálogo — o histórico da unidade continua valendo */
+export function definirSituacaoPdr(id: string, situacao: SituacaoPdr) {
+  pdrsCatalogo = pdrsCatalogo.map((p) => (p.id === id ? { ...p, situacao } : p))
+  notificarPdr()
+}
+
+/**
+ * Importação em lote. A planilha não traz o id, então o casamento é pelo
+ * documento; quando o mesmo documento aparece em mais de um cadastro (unidades
+ * distintas da mesma inscrição), todos recebem o nome e a situação da linha.
+ */
+export function importarPdrs(
+  lista: Omit<PdrCatalogo, 'id'>[],
+): { novos: number; atualizados: number } {
+  let novos = 0
+  let atualizados = 0
+  let catalogo = [...pdrsCatalogo]
+  let proximo = Number(proximoIdPdr())
+
+  for (const pdr of lista) {
+    const alvos = catalogo.filter((p) => p.cnpj === pdr.cnpj)
+    if (alvos.length > 0) {
+      // cidade/UF não vêm na planilha de PDR: preserva o que já estava
+      catalogo = catalogo.map((p) =>
+        p.cnpj === pdr.cnpj ? { ...p, nome: pdr.nome, situacao: pdr.situacao } : p,
+      )
+      atualizados += alvos.length
+    } else {
+      catalogo = [...catalogo, { ...pdr, id: String(proximo++) }]
+      novos++
+    }
+  }
+
+  pdrsCatalogo = catalogo
+  notificarPdr()
+  return { novos, atualizados }
+}
+
+/**
+ * Observação da unidade para exibir na visita. A ligação é pelo CPF/CNPJ
+ * porque a visita ainda carrega uma cópia dos dados do PDR em vez de apontar
+ * para o cadastro pelo id — quando essa ligação existir, troque aqui.
+ */
+export function useObservacaoPdr(cnpj: string): string | undefined {
+  const catalogo = usePdrsCatalogo()
+  return catalogo.find((p) => p.cnpj === cnpj)?.observacao?.trim() || undefined
 }
 
 /** busca PDR pelo CNPJ no catálogo */
@@ -291,6 +935,7 @@ export function criarVisitaFake(pdr: PdrCatalogo, data: string): Visita {
     },
     numeroVisitas: 1,
     situacao: 'certificada',
+    rodada: 1,
     consultor: 'INSERÇÃO_AUTO',
     lider: 'INSERÇÃO_AUTO',
     liderFocal: 'INSERÇÃO_AUTO',
@@ -319,6 +964,7 @@ export function criarVisitaFake(pdr: PdrCatalogo, data: string): Visita {
       origem: 'PDR',
       valores: { Negativa: 0, Declarada: 0, Positiva: 0, Participante: 0 },
     },
+    diaAnterior: [],
     procedimentos: [],
     historico: [],
     cargas: [],
@@ -330,8 +976,57 @@ export function criarVisitaFake(pdr: PdrCatalogo, data: string): Visita {
 }
 
 /** adiciona uma visita ao store */
+/**
+ * Troca a base inteira pelas visitas importadas. A fila de cada uma não vem da
+ * planilha: é o resultado da própria análise que decide — sem erro, a visita
+ * já entra certificada; com erro, vai para a Central de Correção. É esse o
+ * ponto do teste, ver o que o sistema aponta sozinho.
+ *
+ * Recebe o avaliador por parâmetro para não criar dependência circular com
+ * analise.ts, que já importa deste módulo.
+ */
+export function substituirVisitas(
+  novas: Visita[],
+  contarErros: (v: Visita) => number,
+): { certificadas: number; paraCorrecao: number } {
+  let certificadas = 0
+  let paraCorrecao = 0
+
+  estado = novas.map((v) => {
+    const ajustada = ajustarRecebimento(v)
+    const comErro = contarErros(ajustada) > 0
+    if (comErro) paraCorrecao++
+    else certificadas++
+    return { ...ajustada, rodada: 1, situacao: comErro ? 'central-correcao' : 'certificada' }
+  })
+
+  // tudo passa a ser conteúdo do usuário: nada mais vem do gerador
+  baseSubstituida = true
+  visitasAlteradas.clear()
+  estado.forEach((v) => {
+    visitasAlteradas.add(v.cod)
+    v.cargas.forEach((c) => reservarIdCarga(c.id))
+  })
+
+  notificar()
+  return { certificadas, paraCorrecao }
+}
+
+/**
+ * Esvazia a base de visitas. Marca a base como substituída pelo mesmo motivo
+ * da importação: senão o próximo carregamento traria o gerador de volta e a
+ * tela voltaria a mostrar as visitas de demonstração.
+ */
+export function limparVisitas() {
+  estado = []
+  baseSubstituida = true
+  visitasAlteradas.clear()
+  notificar()
+}
+
 export function adicionarVisita(visita: Visita) {
   estado = [...estado, visita]
+  visitasAlteradas.add(visita.cod)
   notificar()
 }
 
@@ -431,10 +1126,13 @@ export function importarAcumulado(
 
   const pdrDoCatalogo = buscarPdrPorCnpj(item.cnpj)
   const pdr: PdrCatalogo = {
+    // unidade que ainda não está no catálogo entra sem id de cadastro
+    id: pdrDoCatalogo?.id ?? '',
     nome: item.nomePdr || pdrDoCatalogo?.nome || '-',
     cnpj: item.cnpj,
     cidade: municipioEscolhido ?? item.municipio ?? pdrDoCatalogo?.cidade ?? '-',
     uf: item.uf || pdrDoCatalogo?.uf || '-',
+    situacao: pdrDoCatalogo?.situacao ?? 'Ativo',
   }
 
   const visita = criarVisitaFake(pdr, item.dtLancamento)
@@ -477,7 +1175,7 @@ export function registrarRelatorioImportacao(
     id: `REL-${++sequenciaRelatorio}`,
     ts: Date.now(),
     nomeArquivo,
-    importadoPor: USUARIO.nome,
+    importadoPor: obterUsuarioLogado().nome,
     sucesso,
     alerta,
     vermelho,
@@ -491,14 +1189,21 @@ export function registrarRelatorioImportacao(
  * Solicitações — pedidos de exclusão de carga, inserção de dados e
  * acumulado, tratados em quadro kanban com chat e anexos
  * ------------------------------------------------------------------ */
-let solicitacoes: Solicitacao[] = SOLICITACOES_INICIAIS
+let solicitacoes: Solicitacao[] = semAnexosMortos(
+  persistido?.solicitacoes ?? SOLICITACOES_INICIAIS,
+)
 const ouvintesSolicitacoes = new Set<() => void>()
 let sequenciaSolicitacao = Math.max(0, ...solicitacoes.map((s) => s.numero))
-let sequenciaMensagemSolicitacao = 0
-let sequenciaAnexo = 0
+let sequenciaMensagemSolicitacao = maiorSufixo(
+  solicitacoes.flatMap((s) => s.mensagens.map((m) => m.id)),
+)
+let sequenciaAnexo = maiorSufixo(
+  solicitacoes.flatMap((s) => s.mensagens.flatMap((m) => m.anexos.map((a) => a.id))),
+)
 
 function notificarSolicitacoes() {
   ouvintesSolicitacoes.forEach((fn) => fn())
+  agendarGravacao()
 }
 
 export function useSolicitacoes(): Solicitacao[] {
@@ -616,17 +1321,20 @@ const PARAMETROS_INICIAIS: ParametrosRegras = {
   limiteDescontoErro: 25,
   minDigitosPlaca: 6,
   saltoMaxRomaneio: 500,
+  toleranciaHorarioMin: 60,
+  limiteDiaAnteriorTecnologia: 3_000_000,
   caixaFitaMin: CAIXA_FITA_MIN,
   caixaFitaMax: CAIXA_FITA_MAX,
   mensagemErroChat: '⚠️ {quantidade} erro(s) encontrado(s) na visita:',
   regrasAtivas: regrasAtivasPadrao(),
 }
 
-let parametros: ParametrosRegras = PARAMETROS_INICIAIS
+let parametros: ParametrosRegras = persistido?.parametros ?? PARAMETROS_INICIAIS
 const ouvintesParametros = new Set<() => void>()
 
 function notificarParametros() {
   ouvintesParametros.forEach((fn) => fn())
+  agendarGravacao()
 }
 
 /** para uso em componentes React — reage a alterações feitas em Parâmetros */
