@@ -5,9 +5,11 @@ import {
   SOLICITACOES_INICIAIS,
   USUARIOS_INICIAIS,
   reservarIdCarga,
+  historicoAcumuladoPorCnpj as historicoMock,
 } from './data/mock'
 import { regrasAtivasPadrao } from './regras'
 import {
+  dataComparavel,
   mascaraCpfCnpj,
   mascaraPlaca,
   mascaraProdutor,
@@ -19,6 +21,7 @@ import {
   CAIXA_FITA_MIN,
   type Acumulado,
   type AcumuladoImportado,
+  type AcumuladoPeriodo,
   type AnexoArquivo,
   type Carga,
   type Classificacao,
@@ -27,6 +30,7 @@ import {
   type DetalheAcumuladoImportado,
   type ErroLiberado,
   type GrupoRateio,
+  type HistoricoAcumulado,
   type Mensagem,
   type ParametrosRegras,
   type PdrCatalogo,
@@ -51,6 +55,15 @@ import {
   type PatchVolumes,
   type ResumoCorrecao,
 } from './importacao/correcao'
+import { bancoAtivo, supabase } from './backend/cliente'
+import {
+  apagarTodasVisitas,
+  carregarTudo,
+  persistirParametros,
+  persistirPdrs,
+  persistirUsuarios,
+  persistirVisitas,
+} from './backend/persistir'
 
 /* ------------------------------------------------------------------ *
  * Store em memória. Substituir estas funções por chamadas HTTP quando
@@ -62,8 +75,9 @@ import {
  * segura o estado entre sessões.
  * ------------------------------------------------------------------ */
 const CHAVE_PERSISTENCIA = 'qima-harvest/estado'
-/** subir a versão descarta o que estava salvo, em vez de arriscar ler um formato antigo */
-const VERSAO_PERSISTENCIA = 1
+const CHAVE_SESSAO = 'qima-harvest/sessao'
+/** v2: só os dois admins na semente; descartar os 13 usuários de demonstração */
+const VERSAO_PERSISTENCIA = 2
 /** tempo sem novas alterações antes de gravar — evita serializar a cada tecla */
 const ATRASO_GRAVACAO_MS = 500
 
@@ -81,7 +95,7 @@ interface EstadoPersistido {
   pdrs: PdrCatalogo[]
   solicitacoes: Solicitacao[]
   usuarios: Usuario[]
-  usuarioLogadoId: string
+  usuarioLogadoId: string | null
   /**
    * true depois de uma importação em lote: a base de demonstração deixa de ser
    * a origem e só valem as visitas gravadas. Sem esta marca, o reload traria
@@ -115,6 +129,12 @@ function lerPersistido(): EstadoPersistido | null {
 const persistido = lerPersistido()
 
 let gravacaoAgendada: ReturnType<typeof setTimeout> | undefined
+/** true enquanto o boot lê o Supabase — não regrava o que acabou de chegar */
+let hidratando = false
+/** import/limpar: o próximo flush apaga o remoto antes de subir o estado novo */
+let zerarRemoto = false
+/** ignora eco do Realtime logo depois de um save nosso */
+let ignorarRealtimeAte = 0
 
 /**
  * Um anexo é gravado como object URL (`blob:`), que só vale enquanto o
@@ -154,6 +174,32 @@ function registrarFalha(mensagem: string | null) {
   ouvintesFalha.forEach((fn) => fn())
 }
 
+async function gravarNoBanco() {
+  ignorarRealtimeAte = Date.now() + 2500
+  try {
+    if (zerarRemoto) {
+      await apagarTodasVisitas()
+      zerarRemoto = false
+    }
+    const alterar = estado.filter((v) => visitasAlteradas.has(v.cod))
+    if (alterar.length) await persistirVisitas(alterar)
+    await persistirPdrs(pdrsCatalogo)
+    await persistirParametros(parametros)
+    registrarFalha(null)
+    try {
+      await persistirUsuarios(usuarios)
+    } catch (e) {
+      registrarFalha(
+        e instanceof Error ? `Usuários no banco: ${e.message}` : 'Falha ao gravar usuários.',
+      )
+    }
+  } catch (e) {
+    registrarFalha(
+      e instanceof Error ? `Supabase: ${e.message}` : 'Falha ao gravar no banco.',
+    )
+  }
+}
+
 /** tamanho do que seria gravado agora, para a tela mostrar quanto já se usa */
 export function tamanhoPersistido(): number {
   try {
@@ -164,6 +210,14 @@ export function tamanhoPersistido(): number {
 }
 
 function agendarGravacao() {
+  if (hidratando) return
+  if (bancoAtivo()) {
+    clearTimeout(gravacaoAgendada)
+    gravacaoAgendada = setTimeout(() => {
+      void gravarNoBanco()
+    }, ATRASO_GRAVACAO_MS)
+    return
+  }
   if (!temArmazenamento()) return
   clearTimeout(gravacaoAgendada)
   gravacaoAgendada = setTimeout(() => {
@@ -846,10 +900,42 @@ export const percentualDesconto = (c: Carga): number =>
  * de usuário precisa repintar a tela.
  * ------------------------------------------------------------------ */
 let usuarios: Usuario[] = persistido?.usuarios ?? USUARIOS_INICIAIS
-let usuarioLogadoId: string = persistido?.usuarioLogadoId ?? usuarios[0].id
+const EM_TESTE = import.meta.env.MODE === 'test'
+
+function lerSessao(): string | null {
+  if (!temArmazenamento()) return null
+  try {
+    const cru = localStorage.getItem(CHAVE_SESSAO)
+    if (!cru) return persistido?.usuarioLogadoId ?? null
+    const dados = JSON.parse(cru) as { usuarioLogadoId?: string | null }
+    return dados?.usuarioLogadoId ?? null
+  } catch {
+    return persistido?.usuarioLogadoId ?? null
+  }
+}
+
+function gravarSessao() {
+  if (!temArmazenamento()) return
+  try {
+    localStorage.setItem(CHAVE_SESSAO, JSON.stringify({ usuarioLogadoId }))
+  } catch {
+    // storage cheio ou bloqueado: a sessão fica só em memória nesta aba
+  }
+}
+
+function idSessaoInicial(): string | null {
+  const candidato = EM_TESTE
+    ? persistido?.usuarioLogadoId ?? usuarios[0]?.id ?? null
+    : lerSessao()
+  if (candidato && usuarios.some((u) => u.id === candidato)) return candidato
+  return EM_TESTE ? usuarios[0]?.id ?? null : null
+}
+
+let usuarioLogadoId: string | null = idSessaoInicial()
 const ouvintesUsuarios = new Set<() => void>()
 
 function notificarUsuarios() {
+  gravarSessao()
   ouvintesUsuarios.forEach((fn) => fn())
   agendarGravacao()
 }
@@ -863,15 +949,36 @@ export function useUsuarios(): Usuario[] {
   return useSyncExternalStore(assinarUsuarios, () => usuarios, () => usuarios)
 }
 
-/** o usuário logado sempre existe: se o cadastro sumir, cai no primeiro da lista */
-function calcularLogado(): Usuario {
-  return usuarios.find((u) => u.id === usuarioLogadoId) ?? usuarios[0]
+/** o usuário logado some quando a pessoa sai; nas telas protegidas ele existe */
+function calcularLogado(): Usuario | null {
+  if (!usuarioLogadoId) return null
+  return usuarios.find((u) => u.id === usuarioLogadoId) ?? null
+}
+
+const GUEST: Usuario = {
+  id: '',
+  nome: '',
+  login: '',
+  perfil: 'Support',
+  situacao: 'Ativo',
 }
 
 let logadoCache = calcularLogado()
 
 export function useUsuarioLogado(): Usuario {
-  return useSyncExternalStore(assinarUsuarios, () => logadoCache, () => logadoCache)
+  return useSyncExternalStore(
+    assinarUsuarios,
+    () => logadoCache ?? GUEST,
+    () => logadoCache ?? GUEST,
+  )
+}
+
+export function useSessaoAtiva(): boolean {
+  return useSyncExternalStore(
+    assinarUsuarios,
+    () => logadoCache !== null,
+    () => logadoCache !== null,
+  )
 }
 
 /** leitura fora de componente (ex.: testes) — nas telas use useUsuarios */
@@ -880,7 +987,7 @@ export function obterUsuarios(): Usuario[] {
 }
 
 export function obterUsuarioLogado(): Usuario {
-  return logadoCache
+  return logadoCache ?? usuarios[0]
 }
 
 /** o perfil do usuário logado libera ou não a edição dos dados da visita */
@@ -895,6 +1002,26 @@ function atualizarLogado() {
 export function entrarComo(id: string) {
   if (!usuarios.some((u) => u.id === id)) return
   usuarioLogadoId = id
+  atualizarLogado()
+  notificarUsuarios()
+}
+
+/**
+ * Confere login (sem diferenciar caixa) e senha. Não diz se o login existe —
+ * a mensagem é a mesma para qualquer falha, inclusive conta inativa.
+ */
+export function autenticar(login: string, senha: string): { ok: boolean; erro?: string } {
+  const alvo = login.trim().toLowerCase()
+  const u = usuarios.find((x) => x.login.toLowerCase() === alvo)
+  if (!u || u.situacao !== 'Ativo' || !u.senha || u.senha !== senha) {
+    return { ok: false, erro: 'Login ou senha inválidos.' }
+  }
+  entrarComo(u.id)
+  return { ok: true }
+}
+
+export function sair() {
+  usuarioLogadoId = null
   atualizarLogado()
   notificarUsuarios()
 }
@@ -1219,6 +1346,7 @@ export function substituirVisitas(
 
   // tudo passa a ser conteúdo do usuário: nada mais vem do gerador
   baseSubstituida = true
+  zerarRemoto = true
   visitasAlteradas.clear()
   estado.forEach((v) => {
     visitasAlteradas.add(v.cod)
@@ -1237,6 +1365,7 @@ export function substituirVisitas(
 export function limparVisitas() {
   estado = []
   baseSubstituida = true
+  zerarRemoto = true
   visitasAlteradas.clear()
   notificar()
 }
@@ -1262,6 +1391,50 @@ export function visitasPorCnpj(cnpj: string): Visita[] {
       }
       return parse(b.data) - parse(a.data)
     })
+}
+
+const NOMES_MES_HIST = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+
+/**
+ * Histórico real da unidade: cada visita no banco vira um ponto. A regra 2.5
+ * (acumulado menor) compara estes pontos — import de acumulado entra aqui.
+ * Sem visitas daquele CNPJ, cai no gerador de demonstração.
+ */
+export function historicoAcumuladoUnidade(cnpj: string, ate: Date): HistoricoAcumulado {
+  const limite = ate.getFullYear() * 10000 + (ate.getMonth() + 1) * 100 + ate.getDate()
+  const porDia = new Map<number, AcumuladoPeriodo>()
+  for (const v of estado) {
+    if (v.pdr.cnpj !== cnpj) continue
+    const n = dataComparavel(v.data)
+    if (!n || n > limite) continue
+    const atual: AcumuladoPeriodo = {
+      periodo: v.data,
+      origem: v.acumulado.origem,
+      negativa: v.acumulado.valores.Negativa,
+      declarada: v.acumulado.valores.Declarada,
+      positiva: v.acumulado.valores.Positiva,
+      participante: v.acumulado.valores.Participante,
+      cargas: v.cargas.length,
+      visitas: 1,
+    }
+    const prev = porDia.get(n)
+    const tot = (p: AcumuladoPeriodo) => p.negativa + p.declarada + p.positiva + p.participante
+    if (!prev || tot(atual) >= tot(prev)) porDia.set(n, atual)
+  }
+  const dias = [...porDia.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([, p]) => p)
+  if (dias.length < 2) return historicoMock(cnpj, ate)
+
+  const mesesMap = new Map<string, AcumuladoPeriodo>()
+  for (const d of [...dias].reverse()) {
+    const n = dataComparavel(d.periodo)
+    const mes = Math.floor((n % 10000) / 100)
+    const ano = Math.floor(n / 10000)
+    const rotulo = `${NOMES_MES_HIST[mes - 1]}/${ano}`
+    mesesMap.set(rotulo, { ...d, periodo: rotulo })
+  }
+  return { dias, meses: [...mesesMap.values()].reverse() }
 }
 
 /** retorna os acumulados importados (visitas com INSERÇÃO_AUTO) por CNPJ/data */
@@ -1571,4 +1744,69 @@ export function obterParametros(): ParametrosRegras {
 export function salvarParametros(novo: ParametrosRegras) {
   parametros = novo
   notificarParametros()
+}
+
+/** boot: troca o mock pelo que está no Postgres. Banco vazio = fila vazia. */
+export async function hidratarDoBanco(): Promise<void> {
+  if (!bancoAtivo()) return
+  hidratando = true
+  try {
+    const dados = await carregarTudo()
+    estado = dados.visitas.map((v) => ({
+      ...v,
+      diaAnterior: v.diaAnterior ?? [],
+      logAlteracoes: v.logAlteracoes ?? [],
+      cargas: v.cargas.map(normalizarCarga),
+    }))
+    if (dados.pdrs.length) pdrsCatalogo = normalizarCatalogo(dados.pdrs)
+    if (dados.parametros) parametros = dados.parametros
+    if (dados.usuarios.length) {
+      usuarios = dados.usuarios
+    } else {
+      usuarios = USUARIOS_INICIAIS
+      try {
+        await persistirUsuarios(usuarios)
+      } catch {
+        // schema antigo (id uuid / sem senha): a semente local ainda entra
+      }
+    }
+    if (usuarioLogadoId && !usuarios.some((u) => u.id === usuarioLogadoId)) {
+      usuarioLogadoId = null
+    }
+    atualizarLogado()
+    visitasAlteradas.clear()
+    baseSubstituida = true
+    estado.forEach((v) => v.cargas.forEach((c) => reservarIdCarga(c.id)))
+    const maiorCod = estado.reduce((m, v) => Math.max(m, v.cod), 0)
+    if (maiorCod >= 900000) contadorFake = maiorCod
+    registrarFalha(null)
+  } catch (e) {
+    registrarFalha(
+      e instanceof Error
+        ? `Não foi possível ler o banco (${e.message}). Mostrando dados locais.`
+        : 'Não foi possível ler o banco.',
+    )
+  } finally {
+    hidratando = false
+    ouvintes.forEach((fn) => fn())
+    ouvintesPdr.forEach((fn) => fn())
+    ouvintesParametros.forEach((fn) => fn())
+    ouvintesUsuarios.forEach((fn) => fn())
+  }
+}
+
+/** outras abas/máquinas veem a mudança de fila e de acumulado */
+export function escutarBanco() {
+  const sb = supabase()
+  if (!sb) return
+  sb.channel('harvest-ops')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'visitas' },
+      () => {
+        if (Date.now() < ignorarRealtimeAte) return
+        void hidratarDoBanco()
+      },
+    )
+    .subscribe()
 }

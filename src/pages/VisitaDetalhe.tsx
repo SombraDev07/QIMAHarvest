@@ -4,12 +4,12 @@ import { Link, useParams } from 'react-router-dom'
 import {
   CORES_CLASSIFICACAO,
   CORES_ORIGEM,
-  historicoAcumuladoPorCnpj,
   situacaoPorId,
 } from '../data/mock'
 import {
   definirInformouDiaAnterior,
   diaAnteriorDe,
+  historicoAcumuladoUnidade,
   percentualDesconto,
   salvarAcumulado,
   salvarDadosVisita,
@@ -918,7 +918,7 @@ function AbaAcumulado({
 
   // a série termina na data da visita: a primeira linha é o dia auditado
   const historico = useMemo(
-    () => historicoAcumuladoPorCnpj(visita.pdr.cnpj, dataParaDate(visita.data)),
+    () => historicoAcumuladoUnidade(visita.pdr.cnpj, dataParaDate(visita.data)),
     [visita.pdr.cnpj, visita.data],
   )
   const periodos = historico[granularidade]

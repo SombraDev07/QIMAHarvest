@@ -4702,3 +4702,160 @@ tr.row-invalid td {
 .sol-anexo-remover:hover {
   color: var(--brand);
 }
+
+/* ==================================================================
+   Login — split QIMA vermelho + colheitadeira na soja
+   ================================================================== */
+.login {
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: 1.12fr minmax(380px, 1fr);
+  background: var(--surface);
+}
+
+.login__hero {
+  position: relative;
+  overflow: hidden;
+  background: var(--ink-900);
+}
+
+.login__foto {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 55% 50%;
+}
+
+.login__hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(20, 22, 26, 0.05) 0%, rgba(20, 22, 26, 0.2) 55%, rgba(20, 22, 26, 0.55) 100%),
+    linear-gradient(180deg, rgba(163, 0, 30, 0.08) 0%, rgba(20, 22, 26, 0.2) 40%, rgba(228, 0, 43, 0.72) 100%);
+}
+
+.login__hero-copy {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 48px 44px;
+  color: #fff;
+}
+
+.login__kicker {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2.2px;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.login__hero-copy h1 {
+  margin: 10px 0 8px;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.6px;
+  line-height: 1.15;
+  max-width: 14ch;
+}
+
+.login__hero-copy p {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  opacity: 0.88;
+}
+
+.login__panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 36px;
+  background:
+    radial-gradient(90% 70% at 100% 0%, var(--brand-050), transparent 60%),
+    var(--surface);
+}
+
+.login__card {
+  width: 100%;
+  max-width: 400px;
+}
+
+.login__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--brand);
+  margin-bottom: 28px;
+}
+
+.login__brand .brand__divider {
+  background: var(--border-strong);
+}
+
+.login__brand .brand__app {
+  color: var(--ink-800);
+  opacity: 1;
+}
+
+.login__card h2 {
+  margin: 0 0 8px;
+  font-size: 26px;
+  font-weight: 750;
+  letter-spacing: -0.4px;
+  color: var(--ink-900);
+}
+
+.login__lead {
+  margin: 0 0 28px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.login__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login__form .field label {
+  font-weight: 650;
+}
+
+.login__form input {
+  height: 44px;
+}
+
+.login__submit {
+  height: 44px;
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .login {
+    grid-template-columns: 1fr;
+  }
+  .login__hero {
+    min-height: 220px;
+  }
+  .login__hero-copy {
+    padding: 22px 24px;
+  }
+  .login__hero-copy h1 {
+    font-size: 24px;
+    max-width: none;
+  }
+  .login__panel {
+    padding: 28px 22px 48px;
+  }
+}

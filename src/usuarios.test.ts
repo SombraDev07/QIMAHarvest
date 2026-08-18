@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   adicionarUsuario,
   alterarMinhaSenha,
+  autenticar,
   atualizarUsuario,
   cpfJaCadastrado,
   definirCredenciais,
@@ -58,10 +59,13 @@ describe('perfis de acesso', () => {
     for (const p of leitura) expect(podeEditarVisita(p), p).toBe(false)
   })
 
-  it('a base traz pelo menos um usuário de cada perfil combinado', () => {
-    for (const perfil of ['Admin', 'Strategic Leader', 'Operational Leader', 'Information Analyst']) {
-      expect(USUARIOS_INICIAIS.some((u) => u.perfil === perfil), perfil).toBe(true)
-    }
+  it('a base nasce com os dois administradores da operação', () => {
+    expect(USUARIOS_INICIAIS).toHaveLength(2)
+    expect(USUARIOS_INICIAIS.every((u) => u.perfil === 'Admin')).toBe(true)
+    expect(USUARIOS_INICIAIS.map((u) => u.login.toLowerCase()).sort()).toEqual([
+      'bruno.ferreira',
+      'ederlan.qima',
+    ])
   })
 })
 
@@ -79,7 +83,7 @@ describe('sessão', () => {
   })
 
   it('perfil sem permissão perde a edição da visita', () => {
-    const auditor = USUARIOS_INICIAIS.find((u) => u.perfil === 'Auditor')!
+    const auditor = adicionarUsuario(novo({ perfil: 'Auditor' }))
     entrarComo(auditor.id)
     expect(podeEditarVisita(obterUsuarioLogado().perfil)).toBe(false)
   })
@@ -204,13 +208,31 @@ describe('login e senha', () => {
     expect(loginJaCadastrado('')).toBe(false)
   })
 
-  it('a base nasce sem senha — quem define é o Admin', () => {
-    expect(USUARIOS_INICIAIS.every((u) => !u.senha)).toBe(true)
+  it('os dois administradores já nascem com senha para entrar', () => {
+    expect(USUARIOS_INICIAIS.every((u) => u.senha === 'Qima123')).toBe(true)
+  })
+
+  it('autentica pelos dois admins, sem diferenciar caixa no login', () => {
+    expect(autenticar('bruno.ferreira', 'errada').ok).toBe(false)
+    expect(autenticar('Bruno.Ferreira', 'Qima123')).toEqual({ ok: true })
+    expect(obterUsuarioLogado().login.toLowerCase()).toBe('bruno.ferreira')
+    expect(autenticar('ederlan.qima', 'Qima123').ok).toBe(true)
+    expect(obterUsuarioLogado().login.toLowerCase()).toBe('ederlan.qima')
+  })
+
+  it('recusa conta inativa com a mesma mensagem genérica', () => {
+    const admin = USUARIOS_INICIAIS.find((u) => u.perfil === 'Admin')!
+    entrarComo(admin.id)
+    const u = adicionarUsuario(novo({ senha: 'teste123', situacao: 'Inativo' }))
+    expect(autenticar(u.login, 'teste123')).toEqual({
+      ok: false,
+      erro: 'Login ou senha inválidos.',
+    })
   })
 
   it('só o Admin define credenciais', () => {
     const alvo = adicionarUsuario(novo())
-    const auditor = USUARIOS_INICIAIS.find((u) => u.perfil === 'Auditor')!
+    const auditor = adicionarUsuario(novo({ perfil: 'Auditor' }))
 
     entrarComo(auditor.id)
     expect(definirCredenciais(alvo.id, 'novo.login', 'segredo123')).toBe(false)

@@ -7,6 +7,7 @@ import { situacaoPorId } from '../data/mock'
 import { useFalhaPersistencia, useUsuarioLogado, useVisita } from '../store'
 import { iniciais } from '../usuario'
 import MinhaSenha from './MinhaSenha'
+import BotaoSair from './BotaoSair'
 import SeletorIdioma from './SeletorIdioma'
 import LogAlteracoes from './LogAlteracoes'
 
@@ -114,6 +115,7 @@ export default function LayoutVisita() {
             <div className="user__role">{usuario.perfil}</div>
           </div>
           <MinhaSenha />
+          <BotaoSair />
           <SeletorIdioma />
         </div>
       </header>

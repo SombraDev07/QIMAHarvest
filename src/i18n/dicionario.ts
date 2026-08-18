@@ -259,6 +259,13 @@ export const EN: Record<string, string> = {
   'Novo usuário': 'New user',
   Login: 'Login',
   Senha: 'Password',
+  Entrar: 'Sign in',
+  Sair: 'Sign out',
+  'Acessar o Harvest': 'Access Harvest',
+  'Coleta de soja em campo': 'Soybean harvest in the field',
+  'Entre com o login e a senha definidos pelo administrador.':
+    'Sign in with the login and password set by the administrator.',
+  'Login ou senha inválidos.': 'Invalid login or password.',
   Contato: 'Contact',
   CPF: 'Tax ID',
   Perfil: 'Role',

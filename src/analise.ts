@@ -1,5 +1,4 @@
-import { historicoAcumuladoPorCnpj } from './data/mock'
-import { gruposDeRateio, obterParametros, percentualDesconto } from './store'
+import { gruposDeRateio, historicoAcumuladoUnidade, obterParametros, percentualDesconto } from './store'
 import { CLASSIFICACOES, campoNaoInformado } from './types'
 import type { AbaVisita, AcumuladoPeriodo, Carga, Classificacao, ErroLiberado, Responsavel, Visita } from './types'
 
@@ -879,7 +878,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
    * e por isso é comparado com a véspera — comparar com dias[0] seria comparar
    * o número com ele mesmo.
    */
-  const historico = historicoAcumuladoPorCnpj(visita.pdr.cnpj, dataParaDate(visita.data))
+  const historico = historicoAcumuladoUnidade(visita.pdr.cnpj, dataParaDate(visita.data))
   const vespera = historico.dias[1]
 
   // 2.4 — crescimento diário de uma classificação acima de 2.000.000 kg

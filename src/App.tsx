@@ -1,9 +1,11 @@
 import { Suspense, lazy } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import Layout from './components/Layout'
 import LayoutVisita from './components/LayoutVisita'
 import { IconAlerta, IconRotas } from './components/icons'
 import EmBreve from './pages/EmBreve'
+import Login from './pages/Login'
+import { useSessaoAtiva } from './store'
 
 /**
  * Cada página vira um chunk próprio: quem abre Visitas não baixa o código de
@@ -27,10 +29,20 @@ const VisitasLista = lazy(() => import('./pages/VisitasLista'))
 /** placeholder curto: as rotas são chunks pequenos, um spinner pesado piscaria à toa */
 const Carregando = () => <div className="empty">Carregando…</div>
 
+function RequireAuth() {
+  const logado = useSessaoAtiva()
+  const location = useLocation()
+  if (!logado) return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  return <Outlet />
+}
+
 export default function App() {
   return (
     <Suspense fallback={<Carregando />}>
       <Routes>
+        <Route path="/login" element={<Login />} />
+
+        <Route element={<RequireAuth />}>
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/visitas" replace />} />
           <Route path="/administracao" element={<Administracao />} />
@@ -72,6 +84,7 @@ export default function App() {
         {/* registro da visita: layout próprio, sem as abas globais do sistema */}
         <Route element={<LayoutVisita />}>
           <Route path="/visita/:cod" element={<VisitaDetalhe />} />
+        </Route>
         </Route>
       </Routes>
     </Suspense>

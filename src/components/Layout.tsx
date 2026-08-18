@@ -12,6 +12,7 @@ import {
 } from './icons'
 import { iniciais } from '../usuario'
 import MinhaSenha from './MinhaSenha'
+import BotaoSair from './BotaoSair'
 import SeletorIdioma from './SeletorIdioma'
 import { useT } from '../i18n'
 import { useFalhaPersistencia, useUsuarioLogado } from '../store'
@@ -54,6 +55,7 @@ export default function Layout() {
             <div className="user__role">{usuario.perfil}</div>
           </div>
           <MinhaSenha />
+          <BotaoSair />
           <SeletorIdioma />
         </div>
       </header>

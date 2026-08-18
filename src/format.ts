@@ -204,6 +204,29 @@ export function dataComparavel(data: string): number {
   return [d, m, a].every(Number.isFinite) ? a * 10000 + m * 100 + d : 0
 }
 
+/** dd/mm/aaaa → aaaa-mm-dd para o Postgres */
+export function dataBrParaIso(data: string): string | null {
+  const n = dataComparavel(data)
+  if (!n) return null
+  const a = Math.floor(n / 10000)
+  const m = Math.floor((n % 10000) / 100)
+  const d = n % 100
+  return `${a}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+/** aaaa-mm-dd (ou timestamptz) → dd/mm/aaaa */
+export function dataIsoParaBr(iso: string): string {
+  const pedaco = (iso ?? '').slice(0, 10)
+  const [a, m, d] = pedaco.split('-')
+  if (!a || !m || !d) return iso
+  return `${d}/${m}/${a}`
+}
+
+export function horaPg(valor: string | null | undefined): string {
+  if (!valor) return ''
+  return valor.slice(0, 5)
+}
+
 /** o mesmo, para o valor de um <input type="date"> (aaaa-mm-dd) */
 export function dataIsoComparavel(iso: string): number {
   const [a, m, d] = (iso ?? '').split('-').map(Number)

@@ -82,7 +82,7 @@ export default function Usuarios() {
   }
 
   function salvar() {
-    // só nome e login são exigidos: o resto do cadastro pode ficar em branco
+    // nome, login e senha (no cadastro novo) são exigidos; o resto pode ficar em branco
     if (!form.nome.trim()) return setErro('Nome é obrigatório.')
     if (!form.login.trim()) return setErro('Login é obrigatório.')
     if (loginJaCadastrado(form.login, editandoId || undefined))
@@ -93,6 +93,8 @@ export default function Usuarios() {
     if (!cpfValido(form.cpf ?? '')) return setErro('CPF incompleto — precisa ter 11 dígitos.')
     if (cpfJaCadastrado(form.cpf ?? '', editandoId || undefined))
       return setErro('Já existe usuário com este CPF.')
+    if (!editandoId && !(form.senha ?? '').trim())
+      return setErro('Senha é obrigatória — é com ela que a pessoa entra no sistema.')
     if ((form.senha ?? '').length > 0 && (form.senha ?? '').length < SENHA_MIN)
       return setErro(`Senha muito curta — mínimo de ${SENHA_MIN} caracteres.`)
 
@@ -111,11 +113,7 @@ export default function Usuarios() {
       setAviso(`Usuário ${dados.nome} atualizado.`)
     } else {
       const novo = adicionarUsuario({ ...dados, senha: senha || undefined })
-      setAviso(
-        senha
-          ? `Usuário criado com o ID ${novo.id} e senha definida.`
-          : `Usuário criado com o ID ${novo.id}. A senha ainda precisa ser definida por um Admin.`,
-      )
+      setAviso(`Usuário criado com o ID ${novo.id}. Já pode entrar no Harvest.`)
     }
 
     fecharForm()
@@ -203,15 +201,13 @@ export default function Usuarios() {
                 id="u-login"
                 value={form.login}
                 disabled={!!editandoId && !ehAdmin}
-                onChange={(e) =>
-                  setForm({ ...form, login: e.target.value.trim().toLowerCase() })
-                }
-                placeholder="nome.sobrenome"
+                onChange={(e) => setForm({ ...form, login: e.target.value.trim() })}
+                placeholder="Nome.Sobrenome"
               />
               <span className="field__hint">
                 {editandoId && !ehAdmin
                   ? 'Só um Admin altera o login.'
-                  : 'É por ele que a pessoa entra no sistema.'}
+                  : 'É por ele que a pessoa entra no sistema. Maiúsculas não importam.'}
               </span>
             </div>
             <div className="field">
@@ -229,7 +225,7 @@ export default function Usuarios() {
                 {ehAdmin
                   ? editandoId
                     ? 'Em branco mantém a senha atual.'
-                    : `Mínimo de ${SENHA_MIN} caracteres. Pode ficar vazia e ser definida depois.`
+                    : `Obrigatória. Mínimo de ${SENHA_MIN} caracteres.`
                   : 'Só um Admin define senha.'}
               </span>
             </div>

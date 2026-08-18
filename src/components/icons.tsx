@@ -218,6 +218,13 @@ export const IconArrastar = ({ size = 14 }: Props) => (
   </svg>
 )
 
+export const IconSair = ({ size = 14 }: Props) => (
+  <svg {...base(size)}>
+    <path d="M10 4H6a2 2 0 00-2 2v12a2 2 0 002 2h4" />
+    <path d="M16 8l4 4-4 4M10 12h10" />
+  </svg>
+)
+
 export const IconPlanilha = ({ size = 26 }: Props) => (
   <svg {...base(size)}>
     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />

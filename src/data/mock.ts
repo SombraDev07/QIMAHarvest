@@ -847,22 +847,32 @@ export const PDRS_CATALOGO_INICIAIS: PdrCatalogo[] = (() => {
 })()
 
 /* ------------------------------------------------------------------ *
- * Usuários — um por perfil, para dar pra testar o acesso de cada um
+ * Usuários — só os dois admins da operação. O restante nasce em
+ * Administração → Usuários → Novo usuário.
  * ------------------------------------------------------------------ */
 export const USUARIOS_INICIAIS: Usuario[] = [
-  { id: 'U-001', nome: 'Bruno de Souza Ferreira', login: 'bruno.ferreira', telefone: '(54) 99101-2233', cpf: '123.456.780-62', email: 'bruno.ferreira@qima.com', perfil: 'Information Analyst', situacao: 'Ativo' },
-  { id: 'U-002', nome: 'Clarissa Menegat', login: 'clarissa.menegat', telefone: '(51) 99202-3344', cpf: '123.456.787-39', email: 'clarissa.menegat@qima.com', perfil: 'Admin', situacao: 'Ativo' },
-  { id: 'U-003', nome: 'Helena Duarte', login: 'helena.duarte', telefone: '(11) 99303-4455', cpf: '123.456.794-68', email: 'helena.duarte@qima.com', perfil: 'Strategic Leader', situacao: 'Ativo' },
-  { id: 'U-004', nome: 'Marcos Vinicius Pires', login: 'marcos.pires', telefone: '(65) 99404-5566', cpf: '123.456.801-21', email: 'marcos.pires@qima.com', perfil: 'Operational Leader', situacao: 'Ativo' },
-  { id: 'U-005', nome: 'Renata Vasques', login: 'renata.vasques', telefone: '(62) 99505-6677', cpf: '123.456.808-06', email: 'renata.vasques@qima.com', perfil: 'Supervisor', situacao: 'Ativo' },
-  { id: 'U-006', nome: 'Cesar Monteiro', login: 'cesar.monteiro', telefone: '(41) 99606-7788', cpf: '123.456.815-27', email: 'cesar.monteiro@qima.com', perfil: 'Coordinator', situacao: 'Ativo' },
-  { id: 'U-007', nome: 'Diego Fontana', login: 'diego.fontana', telefone: '(47) 99707-8899', cpf: '123.456.822-56', email: 'diego.fontana@qima.com', perfil: 'Auditor', situacao: 'Ativo' },
-  { id: 'U-008', nome: 'Tatiane Rocha', login: 'tatiane.rocha', telefone: '(31) 99808-9900', cpf: '123.456.829-22', email: 'tatiane.rocha@qima.com', perfil: 'Operational Monitor', situacao: 'Ativo' },
-  { id: 'U-009', nome: 'Otávio Lins', login: 'otavio.lins', telefone: '(48) 99909-0011', cpf: '123.456.836-51', email: 'otavio.lins@qima.com', perfil: 'Support', situacao: 'Ativo' },
-  { id: 'U-010', nome: 'Patrícia Nogueira', login: 'patricia.nogueira', telefone: '(19) 99110-1122', cpf: '123.456.843-80', email: 'patricia.nogueira@cliente.com', perfil: 'Regional GR (Client)', situacao: 'Ativo' },
-  { id: 'U-011', nome: 'Rafael Baldin Rizzi', login: 'rafael.rizzi', telefone: '(53) 99211-2233', cpf: '123.456.850-00', email: 'rafael.rizzi@cliente.com', perfil: 'RTV (Client)', situacao: 'Ativo' },
-  { id: 'U-012', nome: 'Juliana Kramer', login: 'juliana.kramer', telefone: '(11) 99312-3344', cpf: '123.456.857-86', email: 'juliana.kramer@bayer.com', perfil: 'Bayer SP (Client)', situacao: 'Ativo' },
-  { id: 'U-013', nome: 'Antônio Carvalho', login: 'antonio.carvalho', telefone: '(54) 99413-4455', cpf: '123.456.864-05', email: 'antonio.carvalho@qima.com', perfil: 'Supervisor', situacao: 'Inativo' },
+  {
+    id: 'U-001',
+    nome: 'Bruno de Souza Ferreira',
+    login: 'Bruno.Ferreira',
+    senha: 'Qima123',
+    telefone: '(54) 99101-2233',
+    cpf: '123.456.780-62',
+    email: 'bruno.ferreira@qima.com',
+    perfil: 'Admin',
+    situacao: 'Ativo',
+  },
+  {
+    id: 'U-002',
+    nome: 'Ederlan Qima',
+    login: 'Ederlan.Qima',
+    senha: 'Qima123',
+    telefone: '(51) 99202-3344',
+    cpf: '123.456.787-39',
+    email: 'ederlan.qima@qima.com',
+    perfil: 'Admin',
+    situacao: 'Ativo',
+  },
 ]
 
 /* ------------------------------------------------------------------ *
