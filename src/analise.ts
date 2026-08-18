@@ -59,13 +59,15 @@ const CAMPO_PERIODO: Record<Classificacao, CampoNumericoPeriodo> = {
 
 /**
  * 2.5 — o acumulado é cumulativo: por tecnologia, um período pode repetir o
- * valor do anterior, mas nunca ficar abaixo dele.
+ * valor do anterior, mas nunca ficar abaixo dele. O total também não pode
+ * cair: 520 kg depois de 36 mil toneladas é acumulado menor, mesmo com dias
+ * zerados no meio.
  *
  * Duas coisas que NÃO são retrocesso, e por isso ficam de fora:
- *  - período inteiro zerado é período não informado, não é queda;
+ *  - período inteiro zerado é período não informado, não é queda — e também
+ *    não serve de base de comparação (pula para o último dia com valor);
  *  - tecnologia zerada num período em que as outras vieram é a mesma coisa,
- *    só daquela tecnologia.
- * Por isso a comparação exige valor atual maior que zero.
+ *    só daquela tecnologia, desde que o total não tenha caído.
  *
  * Vale só para o acumulado. O Dia Anterior é o movimento de um dia — sobe e
  * desce conforme o que a unidade recebeu —, então não tem regra de
@@ -84,6 +86,7 @@ const ROTULO_TECNOLOGIA: Record<(typeof TECNOLOGIAS)[number], string> = {
 }
 
 const periodoZerado = (p: AcumuladoPeriodo) => TECNOLOGIAS.every((t) => p[t] === 0)
+const totalPeriodo = (p: AcumuladoPeriodo) => TECNOLOGIAS.reduce((s, t) => s + p[t], 0)
 
 export function conferirSerieAcumulado(
   lista: AcumuladoPeriodo[],
@@ -92,34 +95,45 @@ export function conferirSerieAcumulado(
 ): Alerta[] {
   const crono = [...lista].reverse() // do mais antigo para o mais novo
   const achados: Alerta[] = []
+  let anterior: AcumuladoPeriodo | undefined
 
-  for (let i = 1; i < crono.length && achados.length < maximo; i++) {
-    const anterior = crono[i - 1]
+  for (let i = 0; i < crono.length && achados.length < maximo; i++) {
     const atual = crono[i]
-
-    // período sem nada informado não diz que o acumulado caiu
     if (periodoZerado(atual)) continue
+    if (!anterior) {
+      anterior = atual
+      continue
+    }
 
-    const caiu = TECNOLOGIAS.filter((t) => atual[t] > 0 && atual[t] < anterior[t])
-    if (caiu.length === 0) continue
+    const base = anterior
+    const caiu = TECNOLOGIAS.filter((t) => atual[t] > 0 && atual[t] < base[t])
+    const totalCaiu = totalPeriodo(atual) < totalPeriodo(base)
+    if (caiu.length === 0 && !totalCaiu) {
+      anterior = atual
+      continue
+    }
 
-    const detalhes = caiu
-      .map(
-        (t) =>
-          `${ROTULO_TECNOLOGIA[t]} caiu de ${kg(anterior[t])} para ${kg(atual[t])}`,
-      )
-      .join('; ')
+    const detalhes =
+      caiu.length > 0
+        ? caiu
+            .map(
+              (t) =>
+                `${ROTULO_TECNOLOGIA[t]} caiu de ${kg(base[t])} para ${kg(atual[t])}`,
+            )
+            .join('; ')
+        : `total caiu de ${kg(totalPeriodo(base))} para ${kg(totalPeriodo(atual))}`
 
     achados.push({
       id: `b3-retrocesso-${rotulo}-${atual.periodo}`,
       codigo: '2.5',
       severidade: 'erro',
       regra: 'Acumulado menor que o do período anterior (2.5)',
-      detalhe: `${rotulo} ${atual.periodo} vs. ${anterior.periodo}: ${detalhes}. O acumulado pode repetir, mas nunca diminuir.`,
+      detalhe: `${rotulo} ${atual.periodo} vs. ${base.periodo}: ${detalhes}. O acumulado pode repetir, mas nunca diminuir.`,
       aba: 'acumulado',
-      valor: caiu.map((t) => ROTULO_TECNOLOGIA[t]).join(', '),
+      valor: caiu.length ? caiu.map((t) => ROTULO_TECNOLOGIA[t]).join(', ') : 'Total',
       responsavel: 'operacao',
     })
+    anterior = atual
   }
 
   return achados
@@ -874,11 +888,11 @@ export function analisarVisita(visita: Visita): Alerta[] {
 
   /**
    * A série só tem dias com visita (ou import de acumulado). dias[0] é o próprio
-   * dia auditado quando existe; dias[1] é o ponto anterior da unidade — não o
-   * dia de calendário, porque não há visita todos os dias.
+   * dia auditado quando existe; o ponto de comparação é o último dia com
+   * acumulado informado — dias zerados no meio não contam como véspera.
    */
   const historico = historicoAcumuladoUnidade(visita.pdr.cnpj, dataParaDate(visita.data))
-  const vespera = historico.dias[1]
+  const vespera = historico.dias.find((d, i) => i > 0 && !periodoZerado(d))
 
   // 2.4 — crescimento diário de uma classificação acima de 2.000.000 kg
   if (vespera) {

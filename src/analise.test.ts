@@ -211,14 +211,33 @@ describe('2.5 — acumulado não pode diminuir', () => {
     ).not.toContain('2.5')
   })
 
-  it('não acusa tecnologia zerada isoladamente', () => {
-    // Negativa veio zerada, mas Positiva cresceu: aquela tecnologia não foi informada
+  it('não acusa tecnologia zerada isoladamente se o total não caiu', () => {
+    // Negativa veio zerada, mas Positiva cobriu o total: aquela tecnologia não foi informada
     expect(
       comSerie([
-        dia('02/06/2026', { negativa: 0, positiva: 80 }),
+        dia('02/06/2026', { negativa: 0, positiva: 150 }),
         dia('01/06/2026', { negativa: 100, positiva: 50 }),
       ]),
     ).not.toContain('2.5')
+  })
+
+  it('pula dia zerado no meio e compara com o último acumulado informado', () => {
+    expect(
+      comSerie([
+        dia('17/03/2026', { positiva: 520 }),
+        dia('16/03/2026', {}),
+        dia('13/03/2026', { positiva: 36_628_514 }),
+      ]),
+    ).toContain('2.5')
+  })
+
+  it('acusa quando o total cai mesmo que as tecnologias preenchidas sejam outras', () => {
+    expect(
+      comSerie([
+        dia('17/03/2026', { positiva: 520 }),
+        dia('13/03/2026', { negativa: 36_628_514 }),
+      ]),
+    ).toContain('2.5')
   })
 
   it('acusa mesmo quando o total sobe, se uma tecnologia caiu', () => {
