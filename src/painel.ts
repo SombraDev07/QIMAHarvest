@@ -22,9 +22,16 @@ import {
   type VisitaAcumuladoResumo,
   type VisitaResumo,
 } from './backend/consultas'
-import { filaAnaliseFotos, type ItemFilaFoto } from './fotos/evidencia'
+import { filaAnaliseFotos, mesclarFilaFotos, type ItemFilaFoto } from './fotos/evidencia'
 import { analisarVisita } from './analise'
-import { obterUsuarioLogado, visitaNaAnaliseFinal, usePdrsCatalogo, useVersaoConsultas, useVisitas } from './store'
+import {
+  invalidarConsultas,
+  obterUsuarioLogado,
+  visitaNaAnaliseFinal,
+  usePdrsCatalogo,
+  useVersaoConsultas,
+  useVisitas,
+} from './store'
 
 export function useKpiSafra(): KpiSafra {
   const locais = useVisitas()
@@ -254,14 +261,21 @@ export function useAcumuladoLista(termo: string): VisitaAcumuladoResumo[] {
     }))
 }
 
-export function useFilaFotos(): ItemFilaFoto[] {
+export function useFilaFotos(): {
+  fila: ItemFilaFoto[]
+  carregando: boolean
+  recarregar: () => void
+} {
   const locais = useVisitas()
   const versao = useVersaoConsultas()
   const [remoto, setRemoto] = useState<ItemFilaFoto[]>([])
+  const [pedido, setPedido] = useState(0)
+  const [carregando, setCarregando] = useState(false)
 
   useEffect(() => {
     if (!bancoAtivo()) return
     let viva = true
+    setCarregando(true)
     void listarFilaFotos()
       .then((r) => {
         if (viva) setRemoto(r)
@@ -269,12 +283,21 @@ export function useFilaFotos(): ItemFilaFoto[] {
       .catch(() => {
         if (viva) setRemoto([])
       })
+      .finally(() => {
+        if (viva) setCarregando(false)
+      })
     return () => {
       viva = false
     }
-  }, [versao])
+  }, [versao, pedido])
 
-  return bancoAtivo() ? remoto : filaAnaliseFotos(locais)
+  const recarregar = () => {
+    setPedido((n) => n + 1)
+    invalidarConsultas()
+  }
+
+  const fila = bancoAtivo() ? mesclarFilaFotos(remoto, locais) : filaAnaliseFotos(locais)
+  return { fila, carregando: bancoAtivo() ? carregando : false, recarregar }
 }
 
 export function filaAnaliseFinalLocal(visitas: ReturnType<typeof useVisitas>): ItemAnaliseFinal[] {

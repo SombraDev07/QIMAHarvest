@@ -1,9 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useT } from '../i18n'
 import { Breadcrumb, PageHead, Panel, Toast } from '../components/ui'
 import { salvarParametros, useParametros } from '../store'
 import { CATALOGO_REGRAS } from '../regras'
-import type { ParametrosRegras } from '../types'
+import type { ParametrosRegras, VisaoProvedor } from '../types'
+import {
+  MODELO_GEMINI,
+  MODELO_OPENAI,
+  configVisaoDe,
+  listarModelosGemini,
+  modelosVisaoDe,
+  type ModeloVisaoOpcao,
+} from '../fotos/visao'
 
 export default function Parametros() {
   const parametros = useParametros()
@@ -20,6 +28,20 @@ export default function Parametros() {
 
   function set<K extends keyof ParametrosRegras>(campo: K, valor: ParametrosRegras[K]) {
     setForm((f) => ({ ...f, [campo]: valor }))
+  }
+
+  function escolherProvedor(provedor: VisaoProvedor) {
+    setForm((f) => {
+      const catalogo = modelosVisaoDe(provedor)
+      const atual = f.visaoModelo.trim()
+      const modelo =
+        !catalogo || catalogo.some((m) => m.id === atual)
+          ? atual
+          : provedor === 'openai'
+            ? MODELO_OPENAI
+            : MODELO_GEMINI
+      return { ...f, visaoProvedor: provedor, visaoModelo: modelo }
+    })
   }
 
   function setRegraAtiva(codigo: string, ativa: boolean) {
@@ -223,7 +245,7 @@ export default function Parametros() {
                 <select
                   id="par-visao-prov"
                   value={form.visaoProvedor}
-                  onChange={(e) => set('visaoProvedor', e.target.value as ParametrosRegras['visaoProvedor'])}
+                  onChange={(e) => escolherProvedor(e.target.value as VisaoProvedor)}
                 >
                   <option value="desligado">{t('Desligado (usar .env se houver)')}</option>
                   <option value="gemini">Gemini</option>
@@ -236,15 +258,12 @@ export default function Parametros() {
                   )}
                 </span>
               </div>
-              <div className="field">
-                <label htmlFor="par-visao-modelo">{t('Modelo')}</label>
-                <input
-                  id="par-visao-modelo"
-                  value={form.visaoModelo}
-                  onChange={(e) => set('visaoModelo', e.target.value)}
-                  placeholder="gemini-2.0-flash / gpt-4o-mini"
-                />
-              </div>
+              <CampoModelo
+                provedor={form.visaoProvedor === 'desligado' ? configVisaoDe(form).provedor : form.visaoProvedor}
+                valor={form.visaoModelo}
+                chave={configVisaoDe(form).chave}
+                onChange={(v) => set('visaoModelo', v)}
+              />
               <div className="field">
                 <label htmlFor="par-visao-chave">{t('Chave da API')}</label>
                 <input
@@ -335,5 +354,137 @@ export default function Parametros() {
 
       {aviso && <Toast mensagem={aviso} onFim={() => setAviso(null)} />}
     </main>
+  )
+}
+
+function CampoModelo({
+  provedor,
+  valor,
+  chave,
+  onChange,
+}: {
+  provedor: VisaoProvedor
+  valor: string
+  chave: string
+  onChange: (v: string) => void
+}) {
+  const t = useT()
+  const catalogoFixo = modelosVisaoDe(provedor)
+  const padrao = provedor === 'openai' ? MODELO_OPENAI : MODELO_GEMINI
+  const [vivos, setVivos] = useState<ModeloVisaoOpcao[] | null>(null)
+  const [buscando, setBuscando] = useState(false)
+  const [erroLista, setErroLista] = useState<string | null>(null)
+
+  async function buscarDaChave() {
+    if (provedor !== 'gemini' || buscando) return
+    if (!chave.trim()) {
+      setErroLista(t('Cole a chave da API Gemini para listar os modelos dela.'))
+      return
+    }
+    setBuscando(true)
+    setErroLista(null)
+    try {
+      const lista = await listarModelosGemini(chave)
+      setVivos(lista)
+      if (lista.length === 0) {
+        setErroLista(t('A chave respondeu, mas nenhum modelo de texto/visão veio na lista.'))
+      }
+    } catch (e) {
+      setVivos(null)
+      setErroLista(e instanceof Error ? e.message : t('Não deu para listar os modelos da chave.'))
+    } finally {
+      setBuscando(false)
+    }
+  }
+
+  useEffect(() => {
+    if (provedor !== 'gemini') {
+      setVivos(null)
+      setErroLista(null)
+      return
+    }
+    if (!chave.trim()) return
+    let viva = true
+    setBuscando(true)
+    setErroLista(null)
+    void listarModelosGemini(chave)
+      .then((lista) => {
+        if (!viva) return
+        setVivos(lista)
+        if (lista.length === 0) {
+          setErroLista(t('A chave respondeu, mas nenhum modelo de texto/visão veio na lista.'))
+        }
+      })
+      .catch((e) => {
+        if (!viva) return
+        setVivos(null)
+        setErroLista(e instanceof Error ? e.message : t('Não deu para listar os modelos da chave.'))
+      })
+      .finally(() => {
+        if (viva) setBuscando(false)
+      })
+    return () => {
+      viva = false
+    }
+  }, [provedor, chave])
+
+  if (!catalogoFixo) {
+    return (
+      <div className="field">
+        <label htmlFor="par-visao-modelo">{t('Modelo')}</label>
+        <input
+          id="par-visao-modelo"
+          value={valor}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={t('opcional — o webhook define o modelo')}
+        />
+      </div>
+    )
+  }
+
+  const catalogo = vivos && vivos.length ? vivos : catalogoFixo
+  const extra = valor.trim() && !catalogo.some((m) => m.id === valor.trim()) ? valor.trim() : ''
+
+  return (
+    <div className="field">
+      <label htmlFor="par-visao-modelo">{t('Modelo')}</label>
+      <select
+        id="par-visao-modelo"
+        value={valor.trim() || padrao}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={buscando}
+      >
+        {catalogo.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+            {m.id === padrao ? ` — ${t('padrão')}` : ''}
+          </option>
+        ))}
+        {extra ? <option value={extra}>{extra}</option> : null}
+      </select>
+      {provedor === 'gemini' && (
+        <span className="field__hint" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          {buscando
+            ? t('Consultando os modelos da sua chave…')
+            : vivos
+              ? `${vivos.length} ${t('modelo(s) desta chave')}`
+              : t('Flash é mais rápido. Pro lê papel mais difícil. Lite é o mais barato.')}
+          <button className="btn btn--ghost btn--sm" type="button" disabled={buscando} onClick={() => void buscarDaChave()}>
+            {t('Listar modelos da chave')}
+          </button>
+        </span>
+      )}
+      {provedor === 'openai' && (
+        <span className="field__hint">
+          {t('Escolha o modelo da lista. Mini costuma bastar para romaneio.')}
+        </span>
+      )}
+      {erroLista && <span className="field__hint">{erroLista}</span>}
+      {vivos && extra ? (
+        <span className="field__hint">
+          {t('Esse nome não veio na sua chave — escolha um da lista (1.5 e 2.0 Flash já saíram).')}
+        </span>
+      ) : null}
+    </div>
   )
 }

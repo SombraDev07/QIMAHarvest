@@ -7,6 +7,7 @@ import {
   lerEvidencia,
   lerEvidenciaAsync,
   lerFilaEmMassa,
+  mesclarFilaFotos,
   notasFiscaisSimuladas,
   resumirLeituraMassa,
 } from './evidencia'
@@ -119,7 +120,8 @@ describe('conferirCargaComFoto', () => {
 })
 
 describe('filaAnaliseFotos', () => {
-  it('só inclui visitas certificadas e põe divergente na frente', () => {
+  it('inclui qualquer situação, só cargas com foto, e põe divergente na frente', () => {
+    const okCentral = { ...base, id: '10', fotoUrl: gerarFotoMock('10', 'ABC1D23', '150001', extra) }
     const ok = { ...base, id: '1', fotoUrl: gerarFotoMock('1', 'ABC1D23', '150001', extra) }
     const div = {
       ...base,
@@ -127,25 +129,64 @@ describe('filaAnaliseFotos', () => {
       placa: 'ZZZ1Z11',
       fotoUrl: gerarFotoMock('2', 'ABC1D23', '150001', extra),
     }
+    const semFoto = { ...base, id: '3' }
     const fila = filaAnaliseFotos([
       {
         cod: 1,
         situacao: 'central-correcao',
+        data: extra.data,
         pdr: { nome: 'A' },
-        cargas: [ok],
+        cargas: [okCentral],
       },
       {
         cod: 9,
         situacao: 'certificada',
         data: '01/06/2026',
         pdr: { nome: 'B' },
-        cargas: [ok, div],
+        cargas: [ok, div, semFoto],
       },
     ] as unknown as Visita[])
-    expect(fila).toHaveLength(2)
+    expect(fila.map((i) => `${i.visitaCod}-${i.carga.id}`).sort()).toEqual(['1-10', '9-1', '9-2'])
     expect(fila[0].carga.id).toBe('2')
     expect(fila[0].conferencia.status).toBe('divergente')
-    expect(fila[1].conferencia.status).toBe('ok')
+    expect(fila.find((i) => i.carga.id === '10')?.visitaCod).toBe(1)
+    expect(fila.find((i) => i.carga.id === '1')?.conferencia.status).toBe('ok')
+  })
+
+  it('marca CONFERIDA quando o analista já validou, mesmo com divergência', () => {
+    const div = {
+      ...base,
+      id: '2',
+      placa: 'ZZZ1Z11',
+      fotoUrl: gerarFotoMock('2', 'ABC1D23', '150001', extra),
+      fotoConferidaPor: 'Ana',
+      fotoConferidaEm: 1,
+    }
+    expect(conferirCargaComFoto(div).status).toBe('conferida')
+    expect(conferirCargaComFoto(div).fonte).toBe('svg-mock')
+  })
+})
+
+describe('mesclarFilaFotos', () => {
+  it('entra carga com foto só no cache local, mesmo fora do remoto', () => {
+    const local = {
+      ...base,
+      id: '88',
+      fotoUrl: 'https://cdn.exemplo/carga.jpg',
+      fotoPath: 'cargas/7/88/a.jpg',
+    }
+    const fila = mesclarFilaFotos([], [
+      {
+        cod: 7,
+        situacao: 'operacao-correcao',
+        data: extra.data,
+        pdr: { nome: 'PDR X' },
+        cargas: [local],
+      },
+    ] as unknown as Visita[])
+    expect(fila).toHaveLength(1)
+    expect(fila[0].carga.id).toBe('88')
+    expect(fila[0].visitaCod).toBe(7)
   })
 })
 
@@ -159,25 +200,24 @@ describe('leitura em massa', () => {
       fotoUrl: gerarFotoMock('2', 'ABC1D23', '150001', extra),
     }
     const jpeg = { ...base, id: '3', fotoUrl: 'https://cdn.exemplo/carga.jpg' }
-    const sem = { ...base, id: '4' }
     const fila = filaAnaliseFotos([
       {
         cod: 9,
-        situacao: 'certificada',
+        situacao: 'central-correcao',
         data: '01/06/2026',
         pdr: { nome: 'B' },
-        cargas: [ok, div, jpeg, sem],
+        cargas: [ok, div, jpeg, { ...base, id: '4' }],
       },
     ] as unknown as Visita[])
     expect(resumirLeituraMassa(fila)).toMatchObject({
-      total: 4,
+      total: 3,
       comFoto: 3,
       lidasLocal: 2,
       lidasApi: 0,
       ok: 1,
       divergente: 1,
       pendenteApi: 1,
-      semFoto: 1,
+      semFoto: 0,
     })
   })
 

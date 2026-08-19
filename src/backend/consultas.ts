@@ -2,7 +2,7 @@ import type { Classificacao, SituacaoId, Visita } from '../types'
 import { pesoVolumeLiquido } from '../types'
 import { dataIsoParaBr } from '../format'
 import { COLUNAS_CARGA, COLUNAS_VISITA, montarCsvDeObjetos } from '../relatorios/planilhas'
-import { conferirCargaComFoto, type ItemFilaFoto } from '../fotos/evidencia'
+import { conferirCargaComFoto, cargaTemFoto, type ItemFilaFoto } from '../fotos/evidencia'
 import { supabase } from './cliente'
 import { assinarFotosCarga } from './evidencias'
 import { cargaDeLinha } from './persistir'
@@ -404,27 +404,36 @@ export async function csvRelatorioCargas(de: string, ate: string, situacao: stri
   return partes.filter(Boolean).join('\r\n')
 }
 
-export async function listarFilaFotos(limite = 200): Promise<ItemFilaFoto[]> {
+export async function listarFilaFotos(limite = 800): Promise<ItemFilaFoto[]> {
   const sb = supabase()
   if (!sb) return []
   const { data, error: e } = await sb
     .from('cargas')
     .select('*, visitas!inner(cod, data, pdr_nome, situacao)')
-    .eq('visitas.situacao', 'certificada')
+    .or('foto_url.not.is.null,foto_path.not.is.null')
     .order('id', { ascending: true })
     .limit(limite)
   if (e) throw erro('fila de fotos', e)
-  const ORDEM: Record<string, number> = { divergente: 0, pendente: 1, 'sem-foto': 2, ok: 3 }
-  const brutas = ((data ?? []) as Record<string, unknown>[]).map((row) => {
-    const visita = row.visitas as Record<string, unknown> | Record<string, unknown>[] | null
-    const v = Array.isArray(visita) ? visita[0] : visita
-    return {
-      visitaCod: n(v?.cod ?? row.visita_cod),
-      visitaData: v?.data ? dataIsoParaBr(String(v.data)) : '',
-      pdrNome: String(v?.pdr_nome ?? ''),
-      carga: cargaDeLinha(row),
-    }
-  })
+  const ORDEM: Record<string, number> = {
+    divergente: 0,
+    pendente: 1,
+    ok: 2,
+    conferida: 3,
+    'sem-foto': 4,
+  }
+  const brutas = ((data ?? []) as Record<string, unknown>[])
+    .map((row) => {
+      const visita = row.visitas as Record<string, unknown> | Record<string, unknown>[] | null
+      const v = Array.isArray(visita) ? visita[0] : visita
+      return {
+        visitaCod: n(v?.cod ?? row.visita_cod),
+        visitaData: v?.data ? dataIsoParaBr(String(v.data)) : '',
+        pdrNome: String(v?.pdr_nome ?? ''),
+        visitaSituacao: v?.situacao as ItemFilaFoto['visitaSituacao'],
+        carga: cargaDeLinha(row),
+      }
+    })
+    .filter((item) => cargaTemFoto(item.carga))
   const cargas = await assinarFotosCarga(brutas.map((i) => i.carga))
   return brutas
     .map((item, i) => ({

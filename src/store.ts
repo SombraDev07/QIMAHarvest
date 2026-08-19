@@ -6,6 +6,7 @@ import {
   USUARIOS_INICIAIS,
   reservarIdCarga,
 } from './data/mock'
+import { MODELO_GEMINI } from './fotos/visao'
 import { regrasAtivasPadrao } from './regras'
 import {
   dataComparavel,
@@ -69,6 +70,7 @@ import {
   persistirPdrs,
   persistirUsuarios,
   persistirVisitas,
+  persistirFotoConferida,
   type PontoUnidade,
 } from './backend/persistir'
 import {
@@ -1054,6 +1056,43 @@ export function certificarVisita(
       texto,
     )
   })
+}
+
+/** analista validou a foto com a IA e marca a carga como CONFERIDA */
+export function marcarFotoConferida(
+  cod: number,
+  cargaId: string,
+  foto?: Pick<Carga, 'fotoUrl' | 'fotoPath'>,
+): { por: string; ts: number } {
+  const por = obterUsuarioLogado().nome
+  const ts = Date.now()
+  alterarVisita(cod, (v) => {
+    if (!v.cargas.some((c) => c.id === cargaId)) return v
+    const cargas = v.cargas.map((c) =>
+      c.id === cargaId
+        ? {
+            ...c,
+            fotoUrl: c.fotoUrl || foto?.fotoUrl,
+            fotoPath: c.fotoPath || foto?.fotoPath,
+            fotoConferidaPor: por,
+            fotoConferidaEm: ts,
+          }
+        : c,
+    )
+    return appendLog(
+      { ...v, cargas },
+      {
+        origem: 'edicao',
+        tipo: 'carga',
+        chave: cargaId,
+        resumo: `Foto da carga ${cargaId} conferida por ${por}`,
+      },
+    )
+  })
+  void persistirFotoConferida(cargaId, por, ts).catch(() => {
+    // a gravação da visita ainda leva as colunas
+  })
+  return { por, ts }
 }
 
 /** garimpo pós-certificação: a visita continua certificada */
@@ -2056,9 +2095,9 @@ const PARAMETROS_INICIAIS: ParametrosRegras = {
   caixaFitaMax: CAIXA_FITA_MAX,
   mensagemErroChat: '⚠️ {quantidade} erro(s) encontrado(s) na visita:',
   regrasAtivas: regrasAtivasPadrao(),
-  visaoProvedor: 'desligado',
+  visaoProvedor: 'gemini',
   visaoChave: '',
-  visaoModelo: '',
+  visaoModelo: MODELO_GEMINI,
   visaoEndpoint: '',
   visaoPrompt: '',
 }
@@ -2068,9 +2107,9 @@ function completarParametros(p: Partial<ParametrosRegras> | null | undefined): P
     ...PARAMETROS_INICIAIS,
     ...p,
     regrasAtivas: { ...PARAMETROS_INICIAIS.regrasAtivas, ...p?.regrasAtivas },
-    visaoProvedor: p?.visaoProvedor ?? 'desligado',
+    visaoProvedor: p?.visaoProvedor ?? 'gemini',
     visaoChave: p?.visaoChave ?? '',
-    visaoModelo: p?.visaoModelo ?? '',
+    visaoModelo: p?.visaoModelo || MODELO_GEMINI,
     visaoEndpoint: p?.visaoEndpoint ?? '',
     visaoPrompt: p?.visaoPrompt ?? '',
   }

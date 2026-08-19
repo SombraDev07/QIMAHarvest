@@ -59,6 +59,13 @@ export const IconFotos = ({ size = 15 }: Props) => (
   </svg>
 )
 
+export const IconRefresh = ({ size = 15 }: Props) => (
+  <svg {...base(size)}>
+    <path d="M20 12a8 8 0 10-2.3 5.5" />
+    <path d="M20 6v6h-6" />
+  </svg>
+)
+
 export const IconMapa = ({ size = 18 }: Props) => (
   <svg {...base(size)}>
     <path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z" />

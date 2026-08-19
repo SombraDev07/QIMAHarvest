@@ -54,6 +54,12 @@ export function visaoProvedorDe(v: unknown): VisaoProvedor {
   return PROVEDORES.includes(s as VisaoProvedor) ? (s as VisaoProvedor) : 'desligado'
 }
 
+/** vazio / ausente → Gemini (padrão da Análise de Fotos) */
+export function visaoProvedorOuPadrao(v: unknown): VisaoProvedor {
+  const s = String(v ?? '').trim()
+  return s ? visaoProvedorDe(s) : 'gemini'
+}
+
 function env(nome: 'VITE_VISION_PROVIDER' | 'VITE_VISION_API_KEY' | 'VITE_VISION_MODEL' | 'VITE_VISION_ENDPOINT'): string {
   try {
     if (import.meta.env.MODE === 'test') return ''
@@ -63,8 +69,83 @@ function env(nome: 'VITE_VISION_PROVIDER' | 'VITE_VISION_API_KEY' | 'VITE_VISION
   }
 }
 
-const MODELO_GEMINI = 'gemini-2.0-flash'
-const MODELO_OPENAI = 'gpt-4o-mini'
+export const MODELO_GEMINI = 'gemini-flash-lite-latest'
+export const MODELO_OPENAI = 'gpt-4o-mini'
+
+/** fallback se a chave ainda não listou os modelos ao vivo */
+export const MODELOS_GEMINI: { id: string; label: string }[] = [
+  { id: 'gemini-flash-lite-latest', label: 'Gemini Flash-Lite (sempre o último)' },
+  { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
+  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
+  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
+  { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
+  { id: 'gemini-flash-latest', label: 'Gemini Flash (sempre o último)' },
+  { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
+]
+
+export const MODELOS_OPENAI: { id: string; label: string }[] = [
+  { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+  { id: 'gpt-4o', label: 'GPT-4o' },
+  { id: 'gpt-4.1-mini', label: 'GPT-4.1 mini' },
+  { id: 'gpt-4.1', label: 'GPT-4.1' },
+]
+
+export type ModeloVisaoOpcao = { id: string; label: string }
+
+export function modelosVisaoDe(provedor: VisaoProvedor): ModeloVisaoOpcao[] | null {
+  if (provedor === 'gemini') return MODELOS_GEMINI
+  if (provedor === 'openai') return MODELOS_OPENAI
+  return null
+}
+
+const IGNORAR_MODELO_GEMINI =
+  /embedding|imagen|veo|tts|lyria|robotics|live|aqa|gecko|nano-banana|computer-use|deep-research|-image$|-image-/i
+
+function modeloGeminiUtil(m: Record<string, unknown>): ModeloVisaoOpcao | null {
+  const id = String(m.name ?? m.baseModelId ?? '')
+    .replace(/^models\//, '')
+    .trim()
+  if (!id.startsWith('gemini')) return null
+  const metodos = Array.isArray(m.supportedGenerationMethods)
+    ? m.supportedGenerationMethods.map(String)
+    : []
+  if (metodos.length && !metodos.includes('generateContent')) return null
+  if (IGNORAR_MODELO_GEMINI.test(id)) return null
+  const label = String(m.displayName ?? '').trim()
+  return { id, label: label && label !== id ? label : id }
+}
+
+/**
+ * Pergunta à Google quais modelos esta chave ainda enxerga.
+ * A lista da tela deixa de ser chute — 1.5/2.0 podem já ter saído.
+ */
+export async function listarModelosGemini(
+  chave: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ModeloVisaoOpcao[]> {
+  const key = chave.trim()
+  if (!key) throw new Error('Informe a chave da API Gemini.')
+  const vistos = new Map<string, ModeloVisaoOpcao>()
+  let pageToken = ''
+  for (let n = 0; n < 8; n++) {
+    const qs = new URLSearchParams({ key, pageSize: '100' })
+    if (pageToken) qs.set('pageToken', pageToken)
+    const r = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models?${qs}`)
+    const corpo = (await r.json().catch(() => ({}))) as {
+      models?: Record<string, unknown>[]
+      nextPageToken?: string
+    }
+    if (!r.ok) throw new Error(mensagemErroApi('Gemini', r.status, corpo))
+    for (const m of corpo.models ?? []) {
+      const item = modeloGeminiUtil(m)
+      if (item && !vistos.has(item.id)) vistos.set(item.id, item)
+    }
+    pageToken = String(corpo.nextPageToken ?? '')
+    if (!pageToken) break
+  }
+  return [...vistos.values()].sort((a, b) => a.label.localeCompare(b.label, 'pt'))
+}
 
 export function configVisaoDe(p: ParametrosRegras): ConfigVisao {
   const doForm = visaoProvedorDe(p.visaoProvedor)
@@ -259,6 +340,7 @@ async function chamarGemini(img: ImagemInline, cfg: ConfigVisao, fetchImpl: type
   const texto = (corpo as { candidates?: { content?: { parts?: { text?: string }[] } }[] }).candidates?.[0]
     ?.content?.parts?.map((p) => p.text ?? '')
     .join('')
+    .trim()
   if (!texto) throw new Error('Gemini não devolveu texto.')
   return texto
 }

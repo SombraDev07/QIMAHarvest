@@ -25,6 +25,33 @@ export const EN: Record<string, string> = {
   'Marcar análise final': 'Mark final review',
   'Conferência das evidências fotográficas das cargas em visitas certificadas':
     'Review of photographic evidence for loads on certified visits',
+  'Conferência das evidências fotográficas das cargas com foto anexada':
+    'Review of photographic evidence for every load with an attached photo',
+  'Buscar cargas com foto': 'Find loads with photos',
+  'Buscando…': 'Searching…',
+  'Buscando cargas com foto…': 'Looking up loads with photos…',
+  'carga(s) com foto': 'load(s) with photo',
+  'Nenhuma carga com foto anexada.': 'No load with an attached photo.',
+  'marcada como conferida': 'marked as reviewed',
+  'Foto à esquerda, dados lançados no meio, validação da IA à direita. A fila traz toda carga com foto no sistema, em qualquer situação da visita.':
+    'Photo on the left, entered data in the middle, AI validation on the right. The queue lists every load with a photo in the system, in any visit status.',
+  'Validar com IA.': 'Validate with AI.',
+  'Mostra o que a foto contém para conferir se bate com o lançado.':
+    'Shows what the photo contains so you can check it against the entry.',
+  'Finalizar.': 'Finish.',
+  'Depois de olhar o lado a lado, marque a carga como CONFERIDA.':
+    'After looking at the side-by-side, mark the load as REVIEWED.',
+  'IA bateu': 'AI match',
+  'Foto anexada — busque de novo para abrir a imagem.':
+    'Photo attached — search again to open the image.',
+  'Leitura da IA': 'AI reading',
+  'Validar com IA': 'Validate with AI',
+  'Já conferida': 'Already reviewed',
+  'Finalizar — conferida': 'Finish — reviewed',
+  'Rode a IA para ver o que a foto contém e se os dados batem com o lançado.':
+    'Run the AI to see what the photo contains and whether it matches the entry.',
+  'Conferida por': 'Reviewed by',
+  Visita: 'Visit',
   'Como validar': 'How to validate',
   'A foto é a evidência de campo': 'The photo is the field evidence',
   Fila: 'Queue',
@@ -33,10 +60,10 @@ export const EN: Record<string, string> = {
   'divergente(s)': 'mismatch(es)',
   Divergentes: 'Mismatches',
   'Aguardando visão': 'Awaiting vision',
-  Conferidas: 'Matched',
+  Conferidas: 'Reviewed',
   'Sem foto': 'No photo',
   'Nenhuma carga neste recorte.': 'No loads in this slice.',
-  Conferida: 'Matched',
+  Conferida: 'Reviewed',
   Divergente: 'Mismatch',
   'Abrir visita': 'Open visit',
   'Esta carga não tem evidência fotográfica.': 'This load has no photographic evidence.',
@@ -72,8 +99,24 @@ export const EN: Record<string, string> = {
   'OpenAI no navegador costuma bloquear CORS. Gemini costuma funcionar. Webhook é um POST seu (Edge Function) que devolve o JSON.':
     'OpenAI in the browser often blocks CORS. Gemini usually works. A webhook is your own POST (Edge Function) that returns the JSON.',
   Modelo: 'Model',
+  padrão: 'default',
+  'opcional — o webhook define o modelo': 'optional — the webhook sets the model',
+  'Flash é mais rápido. Pro lê papel mais difícil. Lite é o mais barato.':
+    'Flash is faster. Pro reads harder paperwork. Lite is the cheapest.',
+  'Escolha o modelo da lista. Mini costuma bastar para romaneio.':
+    'Pick the model from the list. Mini is usually enough for delivery notes.',
   'Chave da API': 'API key',
   'vazio = VITE_VISION_API_KEY': 'empty = VITE_VISION_API_KEY',
+  'Cole a chave da API Gemini para listar os modelos dela.':
+    'Paste the Gemini API key to list its models.',
+  'A chave respondeu, mas nenhum modelo de texto/visão veio na lista.':
+    'The key responded, but no text/vision model came back in the list.',
+  'Não deu para listar os modelos da chave.': 'Could not list the models for this key.',
+  'Consultando os modelos da sua chave…': 'Checking the models for your key…',
+  'modelo(s) desta chave': 'model(s) for this key',
+  'Listar modelos da chave': 'List models for this key',
+  'Esse nome não veio na sua chave — escolha um da lista (1.5 e 2.0 Flash já saíram).':
+    'That name is not on your key — pick one from the list (1.5 and 2.0 Flash are gone).',
   'URL do webhook': 'Webhook URL',
   Prompt: 'Prompt',
   'Vazio usa o prompt padrão (várias NFs, romaneio com nome variável).':

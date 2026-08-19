@@ -832,7 +832,8 @@ textarea {
   border-left-width: 4px;
 }
 
-.fotos-item--ok {
+.fotos-item--ok,
+.fotos-item--conferida {
   border-left-color: #0b7a5c;
 }
 
@@ -905,6 +906,12 @@ textarea {
   background: var(--surface-2);
 }
 
+.fotos-status--conferida {
+  color: #0b7a5c;
+  background: #e8f7f1;
+  border-color: #b6e5d3;
+}
+
 .fotos-prova {
   display: grid;
   grid-template-columns: minmax(240px, 0.9fr) minmax(320px, 1.2fr);
@@ -913,6 +920,19 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
+}
+
+.fotos-prova--3 {
+  grid-template-columns: minmax(200px, 0.85fr) minmax(220px, 0.95fr) minmax(240px, 1.1fr);
+}
+
+.fotos-prova__col {
+  min-width: 0;
+}
+
+.fotos-prova__ia {
+  border-left: 1px solid var(--border);
+  padding-left: 16px;
 }
 
 .fotos-prova__acoes {
@@ -1063,9 +1083,23 @@ textarea {
   line-height: 1.45;
 }
 
+@media (max-width: 1200px) {
+  .fotos-prova--3 {
+    grid-template-columns: 1fr 1fr;
+  }
+  .fotos-prova__foto {
+    grid-column: 1 / -1;
+  }
+  .fotos-prova__ia {
+    border-left: none;
+    padding-left: 0;
+  }
+}
+
 @media (max-width: 960px) {
   .fotos-layout,
-  .fotos-prova {
+  .fotos-prova,
+  .fotos-prova--3 {
     grid-template-columns: 1fr;
   }
 }

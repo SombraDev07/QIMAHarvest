@@ -16,7 +16,7 @@ import type {
   Visita,
 } from '../types'
 import { dataBrParaIso, dataIsoParaBr, horaPg } from '../format'
-import { visaoProvedorDe } from '../fotos/visao'
+import { visaoProvedorOuPadrao, MODELO_GEMINI } from '../fotos/visao'
 import { assinarFotosCarga, fotoDeBanco, fotoUrlParaBanco } from './evidencias'
 import { supabase } from './cliente'
 
@@ -104,7 +104,10 @@ export function cargaParaLinha(visitaCod: number, c: Carga): LinhaCarga {
     grupo_rateio: c.grupoRateio ?? null,
     observacao: c.observacao ?? null,
     acompanhada: c.acompanhada,
+    foto_path: c.fotoPath ?? null,
     foto_url: fotoUrlParaBanco(c),
+    foto_conferida_por: c.fotoConferidaPor ?? null,
+    foto_conferida_ts: c.fotoConferidaEm ? new Date(c.fotoConferidaEm).toISOString() : null,
     tecnologia_testada: c.tecnologiaTestada ?? null,
     nao_informado: c.naoInformado ?? {},
   }
@@ -155,6 +158,11 @@ function acumuladoDeLinha(row: LinhaVisita): Acumulado {
 }
 
 export function cargaDeLinha(row: LinhaCarga): Carga {
+  const fotos = fotoDeBanco((row.foto_url as string | null) ?? undefined)
+  const path = String(row.foto_path ?? fotos.fotoPath ?? '').trim()
+  const conferidaEm = row.foto_conferida_ts
+    ? new Date(String(row.foto_conferida_ts)).getTime()
+    : undefined
   return {
     id: String(row.id),
     data: row.data ? dataIsoParaBr(String(row.data)) : '',
@@ -170,7 +178,10 @@ export function cargaDeLinha(row: LinhaCarga): Carga {
     grupoRateio: (row.grupo_rateio as string | null) ?? undefined,
     observacao: (row.observacao as string | null) ?? undefined,
     acompanhada: row.acompanhada !== false,
-    ...fotoDeBanco((row.foto_url as string | null) ?? undefined),
+    ...fotos,
+    ...(path ? { fotoPath: path } : {}),
+    fotoConferidaPor: row.foto_conferida_por ? String(row.foto_conferida_por) : undefined,
+    fotoConferidaEm: conferidaEm && Number.isFinite(conferidaEm) ? conferidaEm : undefined,
     tecnologiaTestada: (row.tecnologia_testada as boolean | null) ?? undefined,
     naoInformado: (row.nao_informado as Carga['naoInformado']) ?? undefined,
   }
@@ -265,6 +276,19 @@ async function todasAsLinhas(
     de += TAMANHO_PAGINA
   }
   return linhas
+}
+
+export async function persistirFotoConferida(cargaId: string, por: string, ts: number): Promise<void> {
+  const sb = supabase()
+  if (!sb) return
+  const { error: e } = await sb
+    .from('cargas')
+    .update({
+      foto_conferida_por: por,
+      foto_conferida_ts: new Date(ts).toISOString(),
+    })
+    .eq('id', cargaId)
+  if (e) throw erro(`foto conferida ${cargaId}`, e)
 }
 
 export async function persistirVisita(v: Visita): Promise<void> {
@@ -596,9 +620,9 @@ export async function carregarTudo(): Promise<{
         caixaFitaMax: Number(pr.caixa_fita_max),
         mensagemErroChat: String(pr.mensagem_erro_chat),
         regrasAtivas: (pr.regras_ativas as ParametrosRegras['regrasAtivas']) ?? {},
-        visaoProvedor: visaoProvedorDe(pr.visao_provedor),
+        visaoProvedor: visaoProvedorOuPadrao(pr.visao_provedor),
         visaoChave: String(pr.visao_chave ?? ''),
-        visaoModelo: String(pr.visao_modelo ?? ''),
+        visaoModelo: String(pr.visao_modelo ?? '').trim() || MODELO_GEMINI,
         visaoEndpoint: String(pr.visao_endpoint ?? ''),
         visaoPrompt: String(pr.visao_prompt ?? ''),
       }
@@ -661,9 +685,9 @@ function parametrosDeLinha(pr: LinhaVisita | null): ParametrosRegras | null {
     caixaFitaMax: Number(pr.caixa_fita_max),
     mensagemErroChat: String(pr.mensagem_erro_chat),
     regrasAtivas: (pr.regras_ativas as ParametrosRegras['regrasAtivas']) ?? {},
-    visaoProvedor: visaoProvedorDe(pr.visao_provedor),
+    visaoProvedor: visaoProvedorOuPadrao(pr.visao_provedor),
     visaoChave: String(pr.visao_chave ?? ''),
-    visaoModelo: String(pr.visao_modelo ?? ''),
+    visaoModelo: String(pr.visao_modelo ?? '').trim() || MODELO_GEMINI,
     visaoEndpoint: String(pr.visao_endpoint ?? ''),
     visaoPrompt: String(pr.visao_prompt ?? ''),
   }

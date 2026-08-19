@@ -77,6 +77,9 @@ export interface Carga {
   fotoUrl?: string
   /** caminho no bucket `evidencias` — o que o banco grava; fotoUrl é a URL de exibição */
   fotoPath?: string
+  /** analista marcou a conferência da foto (depois de validar com a IA) */
+  fotoConferidaPor?: string
+  fotoConferidaEm?: number
   /** tecnologia (trait) da semente foi testada em laboratório */
   tecnologiaTestada?: boolean
   /** campos que o analista marcou como não informados — trava o input e, nos pesos, vale 0 */
@@ -534,7 +537,7 @@ export interface ParametrosRegras {
   /** liga/desliga cada regra do catálogo (chave = código, ex. "3.4.7") — ausente/true = ativa */
   regrasAtivas: Record<string, boolean>
   /**
-   * Análise de Fotos — modelo de visão. `desligado` cai no .env
+   * Análise de Fotos — Gemini Flash-Lite é o padrão. `desligado` cai no .env
    * (VITE_VISION_*). A chave não vai para o git; fica no banco ou no .env.local.
    */
   visaoProvedor: VisaoProvedor

@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   configVisaoDe,
+  listarModelosGemini,
+  MODELO_GEMINI,
+  MODELOS_GEMINI,
   numeroKg,
   parseRespostaVisao,
   visaoLigada,
   visaoProvedorDe,
+  visaoProvedorOuPadrao,
 } from './visao'
 import type { ParametrosRegras } from '../types'
 
@@ -83,5 +87,50 @@ describe('configVisaoDe', () => {
   it('visaoProvedorDe ignora lixo', () => {
     expect(visaoProvedorDe('GEMINI')).toBe('gemini')
     expect(visaoProvedorDe('foo')).toBe('desligado')
+  })
+
+  it('ausente vira Gemini padrão', () => {
+    expect(visaoProvedorOuPadrao('')).toBe('gemini')
+    expect(visaoProvedorOuPadrao('desligado')).toBe('desligado')
+  })
+
+  it('lista os Gemini para o select e inclui o padrão', () => {
+    expect(MODELOS_GEMINI.some((m) => m.id === MODELO_GEMINI)).toBe(true)
+    expect(MODELOS_GEMINI.map((m) => m.id)).toContain('gemini-flash-lite-latest')
+  })
+})
+
+describe('listarModelosGemini', () => {
+  it('fica só com generateContent e ignora embedding/imagem', async () => {
+    const lista = await listarModelosGemini('chave-teste', async () =>
+      new Response(
+        JSON.stringify({
+          models: [
+            {
+              name: 'models/gemini-2.5-flash',
+              displayName: 'Gemini 2.5 Flash',
+              supportedGenerationMethods: ['generateContent'],
+            },
+            {
+              name: 'models/gemini-embedding-001',
+              displayName: 'Embedding',
+              supportedGenerationMethods: ['embedContent'],
+            },
+            {
+              name: 'models/gemini-2.5-flash-image',
+              displayName: 'Image',
+              supportedGenerationMethods: ['generateContent'],
+            },
+            {
+              name: 'models/imagen-4.0-generate',
+              displayName: 'Imagen',
+              supportedGenerationMethods: ['predict'],
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    expect(lista).toEqual([{ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' }])
   })
 })

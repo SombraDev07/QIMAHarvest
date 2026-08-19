@@ -1,38 +1,67 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useT } from '../i18n'
 import { Breadcrumb, PageHead, Panel, Toast } from '../components/ui'
-import { IconFotos, IconInfo } from '../components/icons'
+import { IconFotos, IconInfo, IconRefresh } from '../components/icons'
 import { useFilaFotos } from '../painel'
-import { useParametros } from '../store'
+import { garantirVisitasNoCache, marcarFotoConferida, useParametros } from '../store'
 import {
+  cargaTemFoto,
+  chaveFilaFoto,
+  conferenciaFoiLida,
   conferirCargaComFoto,
   lerEvidenciaAsync,
   lerFilaEmMassa,
+  type ConferenciaFoto,
   type ItemFilaFoto,
   type ResumoLeituraMassa,
   type StatusConferencia,
 } from '../fotos/evidencia'
 import { configVisaoDe, visaoLigada } from '../fotos/visao'
-import { fmtNum } from '../format'
+import { fmtDataHora, fmtKg, fmtNum } from '../format'
+import { situacaoPorId } from '../data/mock'
 
-const FILTROS: { id: 'todas' | StatusConferencia; label: string }[] = [
+type FiltroFila = 'todas' | 'pendente' | 'divergente' | 'conferida'
+
+const FILTROS: { id: FiltroFila; label: string }[] = [
   { id: 'todas', label: 'Todas' },
+  { id: 'pendente', label: 'Pendentes' },
   { id: 'divergente', label: 'Divergentes' },
-  { id: 'pendente', label: 'Aguardando visão' },
-  { id: 'ok', label: 'Conferidas' },
-  { id: 'sem-foto', label: 'Sem foto' },
+  { id: 'conferida', label: 'Conferidas' },
 ]
 
 function rotuloStatus(s: StatusConferencia) {
-  if (s === 'ok') return 'Conferida'
+  if (s === 'conferida') return 'Conferida'
+  if (s === 'ok') return 'IA bateu'
   if (s === 'divergente') return 'Divergente'
   if (s === 'pendente') return 'Aguardando visão'
   return 'Sem foto'
 }
 
-function chave(i: ItemFilaFoto) {
-  return `${i.visitaCod}-${i.carga.id}`
+function noFiltro(item: ItemFilaFoto, filtro: FiltroFila): boolean {
+  const s = item.conferencia.status
+  if (filtro === 'todas') return true
+  if (filtro === 'conferida') return s === 'conferida'
+  if (filtro === 'divergente') return s === 'divergente'
+  return s === 'pendente' || s === 'ok'
+}
+
+function aplicarLeituras(
+  base: ItemFilaFoto[],
+  leituras: Record<string, ConferenciaFoto>,
+): ItemFilaFoto[] {
+  if (!Object.keys(leituras).length) return base
+  return base.map((i) => {
+    const extra = leituras[chaveFilaFoto(i)]
+    if (!extra) return i
+    return {
+      ...i,
+      conferencia: {
+        ...extra,
+        status: i.carga.fotoConferidaEm ? 'conferida' : extra.status,
+      },
+    }
+  })
 }
 
 export default function AnaliseFotos() {
@@ -40,27 +69,40 @@ export default function AnaliseFotos() {
   const parametros = useParametros()
   const cfg = configVisaoDe(parametros)
   const ligada = visaoLigada(cfg)
-  const filaRemota = useFilaFotos()
-  const [overlay, setOverlay] = useState<ItemFilaFoto[] | null>(null)
-  const fila = overlay ?? filaRemota
-  const [filtro, setFiltro] = useState<(typeof FILTROS)[number]['id']>('todas')
+  const { fila: filaBase, carregando, recarregar } = useFilaFotos()
+  const [leituras, setLeituras] = useState<Record<string, ConferenciaFoto>>({})
+  const fila = useMemo(() => aplicarLeituras(filaBase, leituras), [filaBase, leituras])
+  const [filtro, setFiltro] = useState<FiltroFila>('todas')
   const [selecionada, setSelecionada] = useState<string | null>(null)
   const [andamento, setAndamento] = useState<{ feitos: number; total: number } | null>(null)
   const [resumo, setResumo] = useState<ResumoLeituraMassa | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
   const [lendoUma, setLendoUma] = useState(false)
+  const [avisarBusca, setAvisarBusca] = useState(false)
 
-  const visivel = useMemo(
-    () => (filtro === 'todas' ? fila : fila.filter((i) => i.conferencia.status === filtro)),
-    [fila, filtro],
-  )
-
-  const atual = visivel.find((i) => chave(i) === selecionada) ?? visivel[0]
-  const nFoto = fila.filter((i) => i.carga.fotoUrl).length
+  const visivel = useMemo(() => fila.filter((i) => noFiltro(i, filtro)), [fila, filtro])
+  const atual = visivel.find((i) => chaveFilaFoto(i) === selecionada) ?? visivel[0]
+  const nFoto = fila.filter((i) => cargaTemFoto(i.carga) && i.carga.fotoUrl).length
   const lendo = Boolean(andamento)
 
-  function aplicarFila(proxima: ItemFilaFoto[]) {
-    setOverlay(proxima)
+  useEffect(() => {
+    if (!avisarBusca || carregando) return
+    setAvisarBusca(false)
+    setAviso(
+      fila.length
+        ? `${fmtNum(fila.length)} ${t('carga(s) com foto')}`
+        : t('Nenhuma carga com foto anexada.'),
+    )
+  }, [avisarBusca, carregando, fila.length, t])
+
+  function gravarLeitura(item: ItemFilaFoto, conferencia: ConferenciaFoto) {
+    setLeituras((prev) => ({ ...prev, [chaveFilaFoto(item)]: conferencia }))
+  }
+
+  async function buscarCargas() {
+    if (carregando) return
+    setAvisarBusca(true)
+    recarregar()
   }
 
   async function lerEmMassa() {
@@ -68,7 +110,9 @@ export default function AnaliseFotos() {
     setAndamento({ feitos: 0, total: nFoto })
     const r = await lerFilaEmMassa(fila, (feitos, total) => setAndamento({ feitos, total }), cfg)
     setAndamento(null)
-    aplicarFila(r.fila)
+    const mapa: Record<string, ConferenciaFoto> = {}
+    for (const i of r.fila) mapa[chaveFilaFoto(i)] = i.conferencia
+    setLeituras(mapa)
     setResumo(r.resumo)
     if (r.resumo.divergente > 0) {
       setFiltro('divergente')
@@ -90,7 +134,7 @@ export default function AnaliseFotos() {
     try {
       const lida = await lerEvidenciaAsync(item.carga.fotoUrl, cfg)
       const conferencia = conferirCargaComFoto(item.carga, lida)
-      aplicarFila(fila.map((i) => (chave(i) === chave(item) ? { ...i, conferencia } : i)))
+      gravarLeitura(item, conferencia)
       if (lida.fonte === 'visao-erro') setAviso(lida.erro ?? t('Falha na API de visão.'))
       else if (lida.fonte === 'requer-visao') {
         setAviso(t('Nenhuma API de visão configurada. Vá em Administração → Parâmetros.'))
@@ -98,6 +142,16 @@ export default function AnaliseFotos() {
     } finally {
       setLendoUma(false)
     }
+  }
+
+  async function finalizarConferida(item: ItemFilaFoto) {
+    if (!conferenciaFoiLida(item.conferencia) || item.carga.fotoConferidaEm) return
+    await garantirVisitasNoCache([item.visitaCod])
+    const { por, ts } = marcarFotoConferida(item.visitaCod, item.carga.id, item.carga)
+    gravarLeitura(item, { ...item.conferencia, status: 'conferida' })
+    setAviso(
+      `${t('Carga')} ${item.carga.id} ${t('marcada como conferida')} (${por} · ${fmtDataHora(ts)}).`,
+    )
   }
 
   const rotuloApi =
@@ -114,18 +168,26 @@ export default function AnaliseFotos() {
       />
       <PageHead
         titulo={t('Análise de Fotos')}
-        subtitulo={t(
-          'Conferência das evidências fotográficas das cargas em visitas certificadas',
-        )}
+        subtitulo={t('Conferência das evidências fotográficas das cargas com foto anexada')}
         acoes={
-          <button
-            className="btn btn--primary"
-            type="button"
-            disabled={lendo || nFoto === 0}
-            onClick={() => void lerEmMassa()}
-          >
-            <IconFotos /> {lendo ? t('Lendo…') : t('Ler em massa')}
-          </button>
+          <>
+            <button
+              className="btn btn--ghost"
+              type="button"
+              disabled={carregando}
+              onClick={() => void buscarCargas()}
+            >
+              <IconRefresh /> {carregando ? t('Buscando…') : t('Buscar cargas com foto')}
+            </button>
+            <button
+              className="btn btn--primary"
+              type="button"
+              disabled={lendo || nFoto === 0}
+              onClick={() => void lerEmMassa()}
+            >
+              <IconFotos /> {lendo ? t('Lendo…') : t('Ler em massa')}
+            </button>
+          </>
         }
       />
 
@@ -133,21 +195,17 @@ export default function AnaliseFotos() {
         <div className="panel__body fotos-metodo">
           <p>
             {t(
-              'Do lado esquerdo, a foto. Do lado direito, o que está lançado no sistema e o que a leitura tirou do papel. Romaneio pode aparecer como NF, ticket ou outro nome — o lançado só precisa estar entre os números do documento.',
+              'Foto à esquerda, dados lançados no meio, validação da IA à direita. A fila traz toda carga com foto no sistema, em qualquer situação da visita.',
             )}
           </p>
           <ul>
             <li>
-              <strong>{t('Agora.')}</strong>{' '}
-              {t('Fotos simuladas (SVG) leem no navegador, em lote, sem API.')}
+              <strong>{t('Validar com IA.')}</strong>{' '}
+              {t('Mostra o que a foto contém para conferir se bate com o lançado.')}
             </li>
             <li>
-              <strong>{t('Produção.')}</strong>{' '}
-              {ligada
-                ? t('jpeg/png vão para a API configurada (Gemini, OpenAI ou webhook).')
-                : t(
-                    'jpeg/png ficam pendentes até plugar a API em Administração → Parâmetros (ou VITE_VISION_* no .env.local).',
-                  )}
+              <strong>{t('Finalizar.')}</strong>{' '}
+              {t('Depois de olhar o lado a lado, marque a carga como CONFERIDA.')}
             </li>
           </ul>
         </div>
@@ -193,19 +251,13 @@ export default function AnaliseFotos() {
                 · {fmtNum(resumo.falhas)} {t('falha(s) na API')}
               </>
             )}
-            {resumo.semFoto > 0 && (
-              <>
-                {' '}
-                · {fmtNum(resumo.semFoto)} {t('Sem foto')}
-              </>
-            )}
           </span>
         </div>
       )}
 
       <div className="fotos-filtros">
         {FILTROS.map((f) => {
-          const n = f.id === 'todas' ? fila.length : fila.filter((i) => i.conferencia.status === f.id).length
+          const n = f.id === 'todas' ? fila.length : fila.filter((i) => noFiltro(i, f.id)).length
           return (
             <button
               key={f.id}
@@ -222,14 +274,17 @@ export default function AnaliseFotos() {
         })}
       </div>
 
-      {visivel.length === 0 ? (
+      {carregando && fila.length === 0 ? (
+        <div className="empty">{t('Buscando cargas com foto…')}</div>
+      ) : visivel.length === 0 ? (
         <div className="empty">{t('Nenhuma carga neste recorte.')}</div>
       ) : (
         <div className="fotos-layout">
           <aside className="fotos-fila">
             {visivel.map((item) => {
-              const id = chave(item)
-              const ativo = atual && chave(atual) === id
+              const id = chaveFilaFoto(item)
+              const ativo = atual && chaveFilaFoto(atual) === id
+              const sit = item.visitaSituacao ? situacaoPorId(item.visitaSituacao).label : ''
               return (
                 <button
                   key={id}
@@ -245,7 +300,8 @@ export default function AnaliseFotos() {
                   </div>
                   <div className="fotos-item__pdr">{item.pdrNome}</div>
                   <div className="fotos-item__meta">
-                    Visita {item.visitaCod} · {item.visitaData} · {item.carga.placa || '—'}
+                    Visita {item.visitaCod} · {item.visitaData}
+                    {sit ? ` · ${t(sit)}` : ''} · {item.carga.placa || '—'}
                   </div>
                 </button>
               )
@@ -258,6 +314,7 @@ export default function AnaliseFotos() {
               lendo={lendoUma}
               podeLerApi={Boolean(atual.carga.fotoUrl)}
               onLer={() => void lerUma(atual)}
+              onConferir={() => void finalizarConferida(atual)}
             />
           )}
         </div>
@@ -273,76 +330,141 @@ function PainelProva({
   lendo,
   podeLerApi,
   onLer,
+  onConferir,
 }: {
   item: ItemFilaFoto
   lendo: boolean
   podeLerApi: boolean
   onLer: () => void
+  onConferir: () => void
 }) {
   const t = useT()
   const { carga, conferencia } = item
+  const jaConferida = Boolean(carga.fotoConferidaEm) || conferencia.status === 'conferida'
+  const podeConferir = conferenciaFoiLida(conferencia) && !jaConferida
+  const sit = item.visitaSituacao ? situacaoPorId(item.visitaSituacao).label : ''
+
   return (
-    <section className="fotos-prova">
+    <section className="fotos-prova fotos-prova--3">
       <div className="fotos-prova__foto">
         {carga.fotoUrl ? (
           <img src={carga.fotoUrl} alt={`Evidência da carga ${carga.id}`} />
         ) : (
           <div className="fotos-prova__vazia">
             <IconFotos size={36} />
-            <span>{t('Esta carga não tem evidência fotográfica.')}</span>
+            <span>
+              {carga.fotoPath
+                ? t('Foto anexada — busque de novo para abrir a imagem.')
+                : t('Esta carga não tem evidência fotográfica.')}
+            </span>
           </div>
-        )}
-        {conferencia.fonte === 'requer-visao' && (
-          <p className="field__hint" style={{ marginTop: 10 }}>
-            {t(
-              'Foto real: a leitura automática fica disponível quando houver API de visão configurada.',
-            )}
-          </p>
-        )}
-        {conferencia.fonte === 'visao-erro' && conferencia.erro && (
-          <p className="field__hint" style={{ marginTop: 10 }}>
-            {conferencia.erro}
-          </p>
-        )}
-        {conferencia.fonte === 'svg-mock' && (
-          <p className="field__hint" style={{ marginTop: 10 }}>
-            {t('Leitura local do mock (sem API).')}
-          </p>
-        )}
-        {conferencia.fonte === 'visao' && (
-          <p className="field__hint" style={{ marginTop: 10 }}>
-            {t('Leitura pela API de visão.')}
-          </p>
         )}
       </div>
 
-      <div className="fotos-prova__dados">
+      <div className="fotos-prova__col">
         <div className="fotos-prova__head">
           <h3>
-            Carga {carga.id}
+            {t('No sistema')}
             <span className={`fotos-status fotos-status--${conferencia.status}`}>
               {t(rotuloStatus(conferencia.status))}
             </span>
           </h3>
-          <div className="fotos-prova__acoes">
-            {podeLerApi && (
-              <button className="btn btn--ghost btn--sm" type="button" disabled={lendo} onClick={onLer}>
-                {lendo ? t('Lendo…') : t('Ler esta foto')}
-              </button>
-            )}
-            <Link className="btn btn--ghost btn--sm" to={`/visita/${item.visitaCod}`}>
-              {t('Abrir visita')} {item.visitaCod} →
-            </Link>
-          </div>
+          <Link className="btn btn--ghost btn--sm" to={`/visita/${item.visitaCod}`}>
+            {t('Abrir visita')} {item.visitaCod} →
+          </Link>
         </div>
+        <dl className="fotos-kv">
+          <div>
+            <dt>{t('Carga')}</dt>
+            <dd className="mono">{carga.id}</dd>
+          </div>
+          <div>
+            <dt>{t('Visita')}</dt>
+            <dd>
+              {item.visitaCod} · {item.visitaData}
+            </dd>
+          </div>
+          <div>
+            <dt>{t('PDR')}</dt>
+            <dd>{item.pdrNome}</dd>
+          </div>
+          {sit ? (
+            <div>
+              <dt>{t('Situação')}</dt>
+              <dd>{t(sit)}</dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>{t('Data / hora')}</dt>
+            <dd className="mono">{[carga.data, carga.hora].filter(Boolean).join(' ') || '—'}</dd>
+          </div>
+          <div>
+            <dt>{t('Placa')}</dt>
+            <dd className="mono">{carga.placa || '—'}</dd>
+          </div>
+          <div>
+            <dt>{t('Produtor')}</dt>
+            <dd>{carga.produtor || '—'}</dd>
+          </div>
+          <div>
+            <dt>{t('Romaneio')}</dt>
+            <dd className="mono">{carga.romaneio || '—'}</dd>
+          </div>
+          <div>
+            <dt>{t('Peso líquido')}</dt>
+            <dd className="mono">{carga.pesoLiquido > 0 ? fmtKg(carga.pesoLiquido) : '—'}</dd>
+          </div>
+          <div>
+            <dt>{t('Peso c/ desconto')}</dt>
+            <dd className="mono">{carga.pesoComDesconto > 0 ? fmtKg(carga.pesoComDesconto) : '—'}</dd>
+          </div>
+        </dl>
+      </div>
 
-        {conferencia.checagens.length > 0 ? (
+      <div className="fotos-prova__col fotos-prova__ia">
+        <div className="fotos-prova__head">
+          <h3>{t('Leitura da IA')}</h3>
+        </div>
+        <div className="fotos-prova__acoes">
+          {podeLerApi && (
+            <button className="btn btn--primary btn--sm" type="button" disabled={lendo} onClick={onLer}>
+              {lendo ? t('Lendo…') : t('Validar com IA')}
+            </button>
+          )}
+          <button
+            className="btn btn--ghost btn--sm"
+            type="button"
+            disabled={!podeConferir}
+            onClick={onConferir}
+          >
+            {jaConferida ? t('Já conferida') : t('Finalizar — conferida')}
+          </button>
+        </div>
+        {conferencia.fonte === 'requer-visao' && (
+          <p className="field__hint">
+            {t('Rode a IA para ver o que a foto contém e se os dados batem com o lançado.')}
+          </p>
+        )}
+        {conferencia.fonte === 'visao-erro' && conferencia.erro && (
+          <p className="field__hint">{conferencia.erro}</p>
+        )}
+        {conferencia.fonte === 'svg-mock' && (
+          <p className="field__hint">{t('Leitura local do mock (sem API).')}</p>
+        )}
+        {conferencia.fonte === 'visao' && (
+          <p className="field__hint">{t('Leitura pela API de visão.')}</p>
+        )}
+        {jaConferida && carga.fotoConferidaPor && carga.fotoConferidaEm && (
+          <p className="field__hint">
+            {t('Conferida por')} {carga.fotoConferidaPor} · {fmtDataHora(carga.fotoConferidaEm)}
+          </p>
+        )}
+        {conferencia.checagens.length > 0 && conferenciaFoiLida(conferencia) ? (
           <div className="table-scroll fotos-cmp">
             <table className="data">
               <thead>
                 <tr>
                   <th>{t('Campo')}</th>
-                  <th>{t('No sistema')}</th>
                   <th>{t('Na foto')}</th>
                   <th>{t('Conferência')}</th>
                 </tr>
@@ -360,7 +482,6 @@ function PainelProva({
                     }
                   >
                     <td className="cell-strong">{t(c.rotulo)}</td>
-                    <td className="mono">{c.lancado}</td>
                     <td className="mono">{c.naFoto}</td>
                     <td>
                       {c.ok === true ? t('Bate') : c.ok === false ? t('Não bate') : t('Pendente')}
@@ -371,9 +492,11 @@ function PainelProva({
               </tbody>
             </table>
           </div>
-        ) : (
-          <p className="field__hint">{t('Esta carga não tem evidência fotográfica.')}</p>
-        )}
+        ) : conferencia.checagens.length > 0 ? (
+          <p className="field__hint">
+            {t('Rode a IA para ver o que a foto contém e se os dados batem com o lançado.')}
+          </p>
+        ) : null}
       </div>
     </section>
   )

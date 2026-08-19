@@ -1,5 +1,5 @@
 import { fmtKg, mascaraPlaca, mascaraProdutor, mascaraRomaneio } from '../format'
-import type { Carga, Visita } from '../types'
+import type { Carga, SituacaoId, Visita } from '../types'
 import {
   comConcorrencia,
   lerFotoComVisao,
@@ -17,7 +17,7 @@ export interface EvidenciaLida extends CamposVisao {
   erro?: string
 }
 
-export type StatusConferencia = 'ok' | 'divergente' | 'pendente' | 'sem-foto'
+export type StatusConferencia = 'ok' | 'divergente' | 'pendente' | 'sem-foto' | 'conferida'
 
 export type CampoConferencia =
   | 'dataHora'
@@ -48,8 +48,22 @@ export interface ItemFilaFoto {
   visitaCod: number
   visitaData: string
   pdrNome: string
+  visitaSituacao?: SituacaoId
   carga: Carga
   conferencia: ConferenciaFoto
+}
+
+export function cargaTemFoto(c: Pick<Carga, 'fotoUrl' | 'fotoPath'>): boolean {
+  return Boolean(c.fotoPath?.trim() || c.fotoUrl?.trim())
+}
+
+export function chaveFilaFoto(i: { visitaCod: number; carga: { id: string } }): string {
+  return `${i.visitaCod}-${i.carga.id}`
+}
+
+/** a IA já rodou nesta conferência (mock ou API) — dá para marcar CONFERIDA */
+export function conferenciaFoiLida(c: ConferenciaFoto): boolean {
+  return c.fonte === 'visao' || c.fonte === 'svg-mock'
 }
 
 export type ExtraFotoMock = {
@@ -361,9 +375,17 @@ function statusDe(checagens: ChecagemCampo[], fonte: FonteEvidencia): StatusConf
   return 'ok'
 }
 
+function comConferida(carga: Carga, r: ConferenciaFoto): ConferenciaFoto {
+  if (carga.fotoConferidaEm) return { ...r, status: 'conferida' }
+  return r
+}
+
 export function conferirCargaComFoto(carga: Carga, lida?: EvidenciaLida): ConferenciaFoto {
   const ev = lida ?? lerEvidencia(carga.fotoUrl)
   if (ev.fonte === 'sem-foto') {
+    if (cargaTemFoto(carga)) {
+      return comConferida(carga, { status: 'pendente', fonte: 'requer-visao', checagens: [] })
+    }
     return { status: 'sem-foto', fonte: ev.fonte, checagens: [] }
   }
   if (ev.fonte === 'requer-visao' || ev.fonte === 'visao-erro') {
@@ -377,10 +399,10 @@ export function conferirCargaComFoto(carga: Carga, lida?: EvidenciaLida): Confer
             ? ev.erro ?? 'Falha na API de visão.'
             : 'Foto real: precisa de API de visão para ler o documento.',
       }))
-    return { status: 'pendente', fonte: ev.fonte, checagens, erro: ev.erro }
+    return comConferida(carga, { status: 'pendente', fonte: ev.fonte, checagens, erro: ev.erro })
   }
   const checagens = checagensDe(carga, ev)
-  return { status: statusDe(checagens, ev.fonte), fonte: ev.fonte, checagens }
+  return comConferida(carga, { status: statusDe(checagens, ev.fonte), fonte: ev.fonte, checagens })
 }
 
 function checagensDe(carga: Carga, ev: CamposVisao): ChecagemCampo[] {
@@ -397,24 +419,74 @@ function checagensDe(carga: Carga, ev: CamposVisao): ChecagemCampo[] {
 const ORDEM: Record<StatusConferencia, number> = {
   divergente: 0,
   pendente: 1,
-  'sem-foto': 2,
-  ok: 3,
+  ok: 2,
+  conferida: 3,
+  'sem-foto': 4,
 }
 
-/** fila da aba: só visitas já certificadas */
+function itemDeCarga(v: Visita, carga: Carga): ItemFilaFoto {
+  return {
+    visitaCod: v.cod,
+    visitaData: v.data,
+    pdrNome: v.pdr.nome,
+    visitaSituacao: v.situacao,
+    carga,
+    conferencia: conferirCargaComFoto(carga),
+  }
+}
+
+/** fila da aba: toda carga com foto anexada, em qualquer situação da visita */
 export function filaAnaliseFotos(visitas: Visita[]): ItemFilaFoto[] {
   return visitas
-    .filter((v) => v.situacao === 'certificada')
-    .flatMap((v) =>
-      v.cargas.map((carga) => ({
-        visitaCod: v.cod,
-        visitaData: v.data,
-        pdrNome: v.pdr.nome,
-        carga,
-        conferencia: conferirCargaComFoto(carga),
-      })),
-    )
+    .flatMap((v) => v.cargas.filter(cargaTemFoto).map((carga) => itemDeCarga(v, carga)))
     .sort((a, b) => ORDEM[a.conferencia.status] - ORDEM[b.conferencia.status])
+}
+
+function melhorUrlFoto(a?: string, b?: string): string | undefined {
+  const rank = (u?: string) => {
+    if (!u) return 0
+    if (u.startsWith('http')) return 3
+    if (u.startsWith('data:')) return 2
+    if (u.startsWith('blob:')) return 1
+    return 0
+  }
+  return (rank(a) >= rank(b) ? a : b) || a || b
+}
+
+/** junta o que veio do banco com fotos recém-anexadas ainda só no cache local */
+export function mesclarFilaFotos(remoto: ItemFilaFoto[], visitas: Visita[]): ItemFilaFoto[] {
+  const mapa = new Map<string, ItemFilaFoto>()
+  for (const i of remoto) {
+    if (!cargaTemFoto(i.carga)) continue
+    mapa.set(chaveFilaFoto(i), i)
+  }
+  for (const local of filaAnaliseFotos(visitas)) {
+    const k = chaveFilaFoto(local)
+    const existente = mapa.get(k)
+    if (!existente) {
+      mapa.set(k, local)
+      continue
+    }
+    const carga: Carga = {
+      ...existente.carga,
+      ...local.carga,
+      fotoUrl: melhorUrlFoto(existente.carga.fotoUrl, local.carga.fotoUrl),
+      fotoPath: local.carga.fotoPath || existente.carga.fotoPath,
+      fotoConferidaPor: local.carga.fotoConferidaPor || existente.carga.fotoConferidaPor,
+      fotoConferidaEm: local.carga.fotoConferidaEm || existente.carga.fotoConferidaEm,
+    }
+    mapa.set(k, {
+      ...existente,
+      visitaData: local.visitaData || existente.visitaData,
+      pdrNome: local.pdrNome || existente.pdrNome,
+      visitaSituacao: local.visitaSituacao ?? existente.visitaSituacao,
+      carga,
+      conferencia: conferirCargaComFoto(carga),
+    })
+  }
+  return [...mapa.values()].sort(
+    (a, b) => (ORDEM[a.conferencia.status] ?? 9) - (ORDEM[b.conferencia.status] ?? 9),
+  )
 }
 
 export interface ResumoLeituraMassa {
@@ -439,7 +511,7 @@ export function resumirLeituraMassa(fila: ItemFilaFoto[]): ResumoLeituraMassa {
   let semFoto = 0
   let falhas = 0
   for (const item of fila) {
-    if (item.carga.fotoUrl) comFoto += 1
+    if (cargaTemFoto(item.carga)) comFoto += 1
     if (item.conferencia.fonte === 'svg-mock') lidasLocal += 1
     if (item.conferencia.fonte === 'visao') lidasApi += 1
     if (item.conferencia.fonte === 'requer-visao') pendenteApi += 1
@@ -462,7 +534,7 @@ export async function lerFilaEmMassa(
   onProgress: (feitos: number, total: number) => void,
   cfg?: ConfigVisao,
 ): Promise<{ resumo: ResumoLeituraMassa; fila: ItemFilaFoto[] }> {
-  const alvo = fila.filter((i) => i.carga.fotoUrl)
+  const alvo = fila.filter((i) => cargaTemFoto(i.carga) && i.carga.fotoUrl)
   const total = alvo.length
   if (total === 0) {
     onProgress(0, 0)
