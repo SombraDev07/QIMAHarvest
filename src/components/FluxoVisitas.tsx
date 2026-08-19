@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom'
 import { useT } from '../i18n'
 import { situacaoPorId } from '../data/mock'
-import type { SituacaoId, Visita } from '../types'
+import type { SituacaoId } from '../types'
 import { fmtNum, fmtPct } from '../format'
+import type { FluxoQtd } from '../backend/consultas'
 
 type Etapa = {
   chave: string
@@ -63,24 +64,14 @@ const ETAPAS: Etapa[] = [
 ]
 
 export default function FluxoVisitas({
-  visitas,
+  qtd,
   total,
 }: {
-  visitas: Visita[]
+  qtd: FluxoQtd
   total: number
 }) {
   const t = useT()
-  /**
-   * A contagem por etapa olha situação E rodada. Antes olhava só a situação, e
-   * por isso os cards da 2ª passagem repetiam o número da 1ª — uma visita
-   * recém-chegada aparecia como se já tivesse ido e voltado da Operação.
-   */
-  const quantidade = (e: Etapa) =>
-    visitas.filter(
-      (v) =>
-        v.situacao === e.situacao &&
-        (e.saida || (e.repeticao ? v.rodada >= 2 : v.rodada <= 1)),
-    ).length
+  const quantidade = (e: Etapa) => qtd[e.chave as keyof FluxoQtd] ?? 0
   return (
     <section className="fluxo">
       <div className="fluxo__head">

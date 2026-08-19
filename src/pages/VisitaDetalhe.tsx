@@ -19,7 +19,11 @@ import {
   useUsuarioLogado,
   usePodeEditarVisita,
   useVisita,
+  useVisitaCarregando,
   useVisitas,
+  datasUnidade,
+  codVisitaPorCnpjEData,
+  pontoUnidade,
 } from '../store'
 import {
   CLASSIFICACOES,
@@ -67,6 +71,7 @@ function dataParaDate(data: string): Date {
 export default function VisitaDetalhe() {
   const { cod } = useParams<{ cod: string }>()
   const visita = useVisita(Number(cod))
+  const carregando = useVisitaCarregando(Number(cod))
   // analisarVisita lê os parâmetros por obterParametros(), que não é reativo —
   // assinar aqui é o que faz a análise reagir a uma mudança em Administração
   const parametros = useParametros()
@@ -104,8 +109,15 @@ export default function VisitaDetalhe() {
   if (!visita || !analise) {
     return (
       <main className="page">
-        <Breadcrumb trilha={[{ label: 'Visitas', to: '/visitas' }, { label: 'Não encontrada' }]} />
-        <div className="empty">Visita {cod} não encontrada.</div>
+        <Breadcrumb
+          trilha={[
+            { label: 'Visitas', to: '/visitas' },
+            { label: carregando ? 'Carregando' : 'Não encontrada' },
+          ]}
+        />
+        <div className="empty">
+          {carregando ? `Carregando visita ${cod}…` : `Visita ${cod} não encontrada.`}
+        </div>
       </main>
     )
   }
@@ -1094,23 +1106,23 @@ function AbaDiaAnterior({
   podeEditar: boolean
 }) {
   const { limiteDiaAnteriorTecnologia: teto } = useParametros()
-  const visitas = useVisitas()
+  useVisitas()
 
   const dias = useMemo(() => {
-    const set = new Set<string>([visita.data])
+    const set = new Set<string>([visita.data, ...datasUnidade(visita.pdr.cnpj)])
     const limite = dataComparavel(visita.data)
-    for (const v of visitas) {
-      if (v.pdr.cnpj !== visita.pdr.cnpj) continue
-      const n = dataComparavel(v.data)
-      if (n && n <= limite) set.add(v.data)
+    for (const d of [...set]) {
+      const n = dataComparavel(d)
+      if (!n || n > limite) set.delete(d)
     }
     for (const d of visita.diaAnterior) set.add(d.data)
     return [...set].sort((a, b) => dataComparavel(b) - dataComparavel(a))
-  }, [visita.data, visita.pdr.cnpj, visita.diaAnterior, visitas])
+  }, [visita])
 
-  /** visita da unidade naquele dia — é o que torna a linha clicável */
-  const visitaDoDia = (data: string) =>
-    visitas.find((v) => v.pdr.cnpj === visita.pdr.cnpj && v.data === data)
+  const visitaDoDia = (data: string) => {
+    const n = codVisitaPorCnpjEData(visita.pdr.cnpj, data)
+    return n ? { cod: n } : undefined
+  }
 
   const informados = visita.diaAnterior.filter((d) => d.informouDiaAnterior === 'Sim')
 
@@ -1269,9 +1281,19 @@ function TabelaAcumulado({
     'negativa' | 'declarada' | 'positiva' | 'participante' | 'origem'
   >
 }) {
-  const visitas = useVisitas()
   const total = (p: AcumuladoPeriodo) => p.negativa + p.declarada + p.positiva + p.participante
-  const visitaDoDia = (data: string) => visitas.find((v) => v.pdr.cnpj === cnpj && v.data === data)
+  useVisitas()
+  const visitaDoDia = (data: string) => {
+    const ponto = pontoUnidade(cnpj, data)
+    const cod = ponto?.cod ?? codVisitaPorCnpjEData(cnpj, data)
+    if (!cod) return undefined
+    return {
+      cod,
+      acumulado: ponto
+        ? { origem: ponto.origem, valores: ponto.valores }
+        : undefined,
+    }
+  }
 
   return (
     <div className="table-scroll">
@@ -1302,7 +1324,7 @@ function TabelaAcumulado({
             const p =
               daVisita && acumuladoDaVisita
                 ? { ...bruto, ...acumuladoDaVisita }
-                : outra
+                : outra?.acumulado
                   ? {
                       ...bruto,
                       origem: outra.acumulado.origem,

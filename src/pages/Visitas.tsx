@@ -1,24 +1,15 @@
-import { contarPorSituacao, useVisitas } from '../store'
 import { useT } from '../i18n'
 import { Breadcrumb, PageHead } from '../components/ui'
 import FluxoVisitas from '../components/FluxoVisitas'
 import BuscaVisita from '../components/BuscaVisita'
 import { fmtKg, fmtNum, fmtPct } from '../format'
-import { pesoVolumeLiquido } from '../types'
+import { useFluxoContagens, useKpiSafra } from '../painel'
 
 export default function Visitas() {
-  const visitas = useVisitas()
+  const kpi = useKpiSafra()
+  const fluxo = useFluxoContagens()
   const t = useT()
-  const total = visitas.length
-
-  const emCorrecao =
-    contarPorSituacao(visitas, 'central-correcao') +
-    contarPorSituacao(visitas, 'operacao-correcao')
-  const certificadas = contarPorSituacao(visitas, 'certificada')
-
-  const acompanhadas = visitas.flatMap((v) => v.cargas.filter((c) => c.acompanhada))
-  const pesoLiquido = acompanhadas.reduce((s, c) => s + pesoVolumeLiquido(c), 0)
-  const rateadas = acompanhadas.filter((c) => c.rateio).length
+  const total = kpi.total
 
   return (
     <main className="page">
@@ -28,7 +19,7 @@ export default function Visitas() {
         subtitulo={t("Acompanhamento das visitas aos pontos de recebimento na safra 2025/2026")}
       />
 
-      <BuscaVisita visitas={visitas} />
+      <BuscaVisita />
 
       <div className="kpi-strip">
         <div className="kpi">
@@ -39,31 +30,30 @@ export default function Visitas() {
         <div className="kpi">
           <div className="kpi__label">{t('Taxa de certificação')}</div>
           <div className="kpi__value" style={{ color: 'var(--green)' }}>
-            {fmtPct(total ? (certificadas / total) * 100 : 0)}
+            {fmtPct(total ? (kpi.certificadas / total) * 100 : 0)}
           </div>
-          <div className="kpi__sub">{fmtNum(certificadas)} visitas certificadas</div>
+          <div className="kpi__sub">{fmtNum(kpi.certificadas)} visitas certificadas</div>
         </div>
         <div className="kpi">
           <div className="kpi__label">{t('Aguardando correção')}</div>
           <div className="kpi__value" style={{ color: 'var(--brand)' }}>
-            {fmtNum(emCorrecao)}
+            {fmtNum(kpi.emCorrecao)}
           </div>
           <div className="kpi__sub">{t('central + operação')}</div>
         </div>
         <div className="kpi">
           <div className="kpi__label">{t('Cargas acompanhadas')}</div>
-          <div className="kpi__value">{fmtNum(acompanhadas.length)}</div>
-          <div className="kpi__sub">{fmtNum(rateadas)} em rateio</div>
+          <div className="kpi__value">{fmtNum(kpi.acompanhadas)}</div>
+          <div className="kpi__sub">{fmtNum(kpi.rateadas)} em rateio</div>
         </div>
         <div className="kpi">
           <div className="kpi__label">{t('Volume líquido')}</div>
-          <div className="kpi__value">{fmtKg(pesoLiquido)}</div>
+          <div className="kpi__value">{fmtKg(kpi.volumeKg)}</div>
           <div className="kpi__sub">{t('somatório dos romaneios')}</div>
         </div>
       </div>
 
-      <FluxoVisitas total={total} visitas={visitas}
-      />
+      <FluxoVisitas total={fluxo.total} qtd={fluxo.qtd} />
     </main>
   )
 }

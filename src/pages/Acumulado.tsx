@@ -4,24 +4,18 @@ import { Breadcrumb, PageHead } from '../components/ui'
 import { IconPlanilha, IconEditar, IconRelatorios } from '../components/icons'
 import ImportarAcumulado from '../components/ImportarAcumulado'
 import RelatoriosAcumulado from '../components/RelatoriosAcumulado'
-import { useVisitas, usePdrsCatalogo, useRelatoriosImportacao } from '../store'
+import { useRelatoriosImportacao } from '../store'
+import { useAcumuladoLista, useKpiAcumulado } from '../painel'
 import { fmtKg, fmtNum } from '../format'
 import { CLASSIFICACOES } from '../types'
-import type { Classificacao } from '../types'
 
 export default function Acumulado() {
   const [mostrarImport, setMostrarImport] = useState(false)
   const [mostrarCorrecao, setMostrarCorrecao] = useState(false)
   const [mostrarReports, setMostrarReports] = useState(false)
 
-  const visitas = useVisitas()
-  const pdrs = usePdrsCatalogo()
+  const kpi = useKpiAcumulado()
   const relatorios = useRelatoriosImportacao()
-
-  const visitasAuto = visitas.filter((v) => v.consultor === 'INSERÇÃO_AUTO')
-
-  const totalPorClass = (c: Classificacao) =>
-    visitasAuto.reduce((s, v) => s + v.acumulado.valores[c], 0)
 
   return (
     <main className="page">
@@ -35,18 +29,22 @@ export default function Acumulado() {
       <div className="kpi-strip">
         <div className="kpi">
           <div className="kpi__label">Registros importados</div>
-          <div className="kpi__value">{fmtNum(visitasAuto.length)}</div>
+          <div className="kpi__value">{fmtNum(kpi.registros)}</div>
           <div className="kpi__sub">via planilha</div>
         </div>
         <div className="kpi">
           <div className="kpi__label">PDRs no catálogo</div>
-          <div className="kpi__value">{fmtNum(pdrs.length)}</div>
+          <div className="kpi__value">{fmtNum(kpi.pdrs)}</div>
           <div className="kpi__sub">CNPJs cadastrados</div>
         </div>
         {CLASSIFICACOES.filter((c) => c !== 'Participante').map((c) => (
           <div className="kpi" key={c}>
             <div className="kpi__label">Total {c}</div>
-            <div className="kpi__value">{fmtKg(totalPorClass(c))}</div>
+            <div className="kpi__value">
+              {fmtKg(
+                c === 'Negativa' ? kpi.negativa : c === 'Declarada' ? kpi.declarada : kpi.positiva,
+              )}
+            </div>
             <div className="kpi__sub">kg acumulados</div>
           </div>
         ))}
@@ -106,10 +104,7 @@ export default function Acumulado() {
 
       {/* Modal de correção */}
       {mostrarCorrecao && (
-        <CorrecaoAcumulado
-          visitasAuto={visitasAuto}
-          onClose={() => setMostrarCorrecao(false)}
-        />
+        <CorrecaoAcumulado onClose={() => setMostrarCorrecao(false)} />
       )}
 
       {/* Modal de últimos reports */}
@@ -121,24 +116,12 @@ export default function Acumulado() {
 }
 
 function CorrecaoAcumulado({
-  visitasAuto,
   onClose,
 }: {
-  visitasAuto: ReturnType<typeof useVisitas>
   onClose: () => void
 }) {
   const [busca, setBusca] = useState('')
-
-  const filtradas = visitasAuto.filter((v) => {
-    if (!busca) return true
-    const b = busca.toLowerCase()
-    return (
-      v.pdr.nome.toLowerCase().includes(b) ||
-      v.pdr.cnpj.includes(b) ||
-      v.pdr.cidade.toLowerCase().includes(b) ||
-      String(v.cod).includes(b)
-    )
-  })
+  const filtradas = useAcumuladoLista(busca)
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -147,7 +130,7 @@ function CorrecaoAcumulado({
           <div>
             <div className="modal__title">Correção de Acumulado</div>
             <div className="modal__sub">
-              {visitasAuto.length} registros importados via planilha
+              {filtradas.length} registros importados via planilha
             </div>
           </div>
           <button className="modal__close" onClick={onClose} type="button" aria-label="Fechar">
@@ -196,10 +179,10 @@ function CorrecaoAcumulado({
                     </td>
                     <td>{v.pdr.cidade}/{v.pdr.uf}</td>
                     <td>{v.data}</td>
-                    <td className="num">{fmtKg(v.acumulado.valores.Negativa)}</td>
-                    <td className="num">{fmtKg(v.acumulado.valores.Declarada)}</td>
-                    <td className="num">{fmtKg(v.acumulado.valores.Positiva)}</td>
-                    <td className="num">{fmtKg(v.acumulado.valores.Participante)}</td>
+                    <td className="num">{fmtKg(v.valores.Negativa)}</td>
+                    <td className="num">{fmtKg(v.valores.Declarada)}</td>
+                    <td className="num">{fmtKg(v.valores.Positiva)}</td>
+                    <td className="num">{fmtKg(v.valores.Participante)}</td>
                   </tr>
                 ))}
                 {filtradas.length === 0 && (

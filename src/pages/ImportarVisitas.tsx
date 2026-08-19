@@ -10,9 +10,10 @@ import {
   type CargaImportada,
   type VisitaImportada,
 } from '../importacao/planilhaVisitas'
-import { limparVisitas, substituirVisitas, useVisitas } from '../store'
+import { limparVisitas, substituirVisitas } from '../store'
 import { analisarVisita } from '../analise'
 import { fmtKg } from '../format'
+import { useKpiSafra } from '../painel'
 
 /** lê .csv/.txt direto e .xlsx pela lib, que entra só quando é preciso */
 async function textoDoArquivo(file: File): Promise<string> {
@@ -63,7 +64,7 @@ function CaixaArquivo({
 
 export default function ImportarVisitas() {
   const navegar = useNavigate()
-  const visitasNoSistema = useVisitas()
+  const kpi = useKpiSafra()
   const t = useT()
   const [textoVisitas, setTextoVisitas] = useState('')
   const [textoCargas, setTextoCargas] = useState('')
@@ -72,6 +73,7 @@ export default function ImportarVisitas() {
   const [confirmando, setConfirmando] = useState(false)
   const [zerando, setZerando] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
+  const [progresso, setProgresso] = useState<{ feitos: number; total: number } | null>(null)
 
   const cargas: CargaImportada[] = useMemo(
     () => (textoCargas ? analisarPlanilhaCargas(textoCargas) : []),
@@ -105,17 +107,27 @@ export default function ImportarVisitas() {
   }, [visitas])
 
   const totalCargasVinculadas = visitasOk.reduce((s, v) => s + v.cargas, 0)
+  const noSistema = kpi.total
+  const ocupado = Boolean(progresso)
 
-  function importar() {
-    const r = substituirVisitas(
-      visitasOk.map((v) => v.visita!),
-      (v) => analisarVisita(v).filter((a) => a.severidade === 'erro').length,
-    )
-    setConfirmando(false)
-    setAviso(
-      `${visitasOk.length} visita(s) importada(s): ${r.certificadas} certificada(s) e ${r.paraCorrecao} para a Central de Correção.`,
-    )
-    setTimeout(() => navegar('/visitas'), 1200)
+  async function importar() {
+    setProgresso({ feitos: 0, total: visitasOk.length })
+    try {
+      const r = await substituirVisitas(
+        visitasOk.map((v) => v.visita!),
+        (v) => analisarVisita(v).filter((a) => a.severidade === 'erro').length,
+        (feitos, total) => setProgresso({ feitos, total }),
+      )
+      setConfirmando(false)
+      setAviso(
+        `${visitasOk.length} visita(s) importada(s): ${r.certificadas} certificada(s) e ${r.paraCorrecao} para a Central de Correção.`,
+      )
+      setTimeout(() => navegar('/visitas'), 1200)
+    } catch (e) {
+      setAviso(e instanceof Error ? e.message : 'Falha ao importar.')
+    } finally {
+      setProgresso(null)
+    }
   }
 
   async function carregar(f: File, destino: 'visitas' | 'cargas') {
@@ -141,10 +153,10 @@ export default function ImportarVisitas() {
           <button
             className="btn btn--ghost"
             type="button"
-            disabled={visitasNoSistema.length === 0}
+            disabled={noSistema === 0 || ocupado}
             onClick={() => setZerando(true)}
           >
-            <IconLixeira /> Zerar visitas ({visitasNoSistema.length})
+            <IconLixeira /> Zerar visitas ({noSistema})
           </button>
         }
       />
@@ -302,10 +314,12 @@ export default function ImportarVisitas() {
             <button
               className="btn btn--primary"
               type="button"
-              disabled={visitasOk.length === 0}
+              disabled={visitasOk.length === 0 || ocupado}
               onClick={() => setConfirmando(true)}
             >
-              Substituir a base por {visitasOk.length} visita(s)
+              {ocupado
+                ? `Gravando ${progresso?.feitos ?? 0} de ${progresso?.total ?? 0}…`
+                : `Substituir a base por ${visitasOk.length} visita(s)`}
             </button>
           </div>
         </>
@@ -321,8 +335,13 @@ export default function ImportarVisitas() {
               <button className="btn btn--ghost" type="button" onClick={() => setConfirmando(false)}>
                 Cancelar
               </button>
-              <button className="btn btn--primary" type="button" onClick={importar}>
-                Substituir definitivamente
+              <button
+                className="btn btn--primary"
+                type="button"
+                disabled={ocupado}
+                onClick={() => void importar()}
+              >
+                {ocupado ? 'Gravando…' : 'Substituir definitivamente'}
               </button>
             </>
           }
@@ -353,10 +372,11 @@ export default function ImportarVisitas() {
                 className="btn btn--primary"
                 type="button"
                 onClick={() => {
-                  const quantas = visitasNoSistema.length
-                  limparVisitas()
-                  setZerando(false)
-                  setAviso(`${quantas} visita(s) removida(s). O sistema está sem visitas.`)
+                  const quantas = noSistema
+                  void limparVisitas().then(() => {
+                    setZerando(false)
+                    setAviso(`${quantas} visita(s) removida(s). O sistema está sem visitas.`)
+                  })
                 }}
               >
                 Zerar definitivamente
@@ -365,7 +385,7 @@ export default function ImportarVisitas() {
           }
         >
           <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>
-            As <strong>{visitasNoSistema.length}</strong> visita(s) do sistema serão removidas e a
+            As <strong>{noSistema}</strong> visita(s) do sistema serão removidas e a
             tela de Visitas fica vazia. Serve para você importar num sistema limpo e ver
             exatamente onde cada visita da planilha vai parar.
           </p>

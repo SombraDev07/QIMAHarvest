@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import {
   VISITAS_INICIAIS,
   PDRS_CATALOGO_INICIAIS,
@@ -57,11 +57,18 @@ import {
 import { bancoAtivo, supabase } from './backend/cliente'
 import {
   apagarTodasVisitas,
-  carregarTudo,
+  carregarBoot,
+  carregarVisitaCompleta,
+  carregarVisitasPorCods,
+  carregarVisitasPorIdsCarga,
+  consultarPontosUnidade,
+  importarVisitasLote,
+  maiorCodVisita,
   persistirParametros,
   persistirPdrs,
   persistirUsuarios,
   persistirVisitas,
+  type PontoUnidade,
 } from './backend/persistir'
 
 /* ------------------------------------------------------------------ *
@@ -173,6 +180,42 @@ function registrarFalha(mensagem: string | null) {
   ouvintesFalha.forEach((fn) => fn())
 }
 
+let versaoConsultas = 0
+const ouvintesConsultas = new Set<() => void>()
+let invalidarConsultasAgendado: ReturnType<typeof setTimeout> | null = null
+
+export function invalidarConsultas() {
+  versaoConsultas += 1
+  ouvintesConsultas.forEach((fn) => fn())
+}
+
+function agendarInvalidarConsultas() {
+  if (invalidarConsultasAgendado) clearTimeout(invalidarConsultasAgendado)
+  invalidarConsultasAgendado = setTimeout(() => {
+    invalidarConsultasAgendado = null
+    invalidarConsultas()
+  }, 400)
+}
+
+export function useVersaoConsultas(): number {
+  return useSyncExternalStore(
+    (fn) => {
+      ouvintesConsultas.add(fn)
+      return () => ouvintesConsultas.delete(fn)
+    },
+    () => versaoConsultas,
+    () => versaoConsultas,
+  )
+}
+
+const pontosPorCnpj = new Map<string, PontoUnidade[]>()
+const visitasAusentes = new Set<number>()
+const visitasPedidas = new Set<number>()
+
+function notificarLeitura() {
+  ouvintes.forEach((fn) => fn())
+}
+
 async function gravarNoBanco() {
   ignorarRealtimeAte = Date.now() + 2500
   try {
@@ -185,6 +228,7 @@ async function gravarNoBanco() {
     await persistirPdrs(pdrsCatalogo)
     await persistirParametros(parametros)
     registrarFalha(null)
+    invalidarConsultas()
     try {
       await persistirUsuarios(usuarios)
     } catch (e) {
@@ -306,7 +350,7 @@ function montarEstadoInicial(): Visita[] {
   return [...daBase, ...criadas].map(normalizar)
 }
 
-let estado: Visita[] = montarEstadoInicial()
+let estado: Visita[] = bancoAtivo() ? [] : montarEstadoInicial()
 const ouvintes = new Set<() => void>()
 
 /** o maior sufixo numérico de ids como "MSG-LOCAL-12", para a sequência continuar dali */
@@ -323,6 +367,7 @@ estado.forEach((v) => v.cargas.forEach((c) => reservarIdCarga(c.id)))
 function notificar() {
   ouvintes.forEach((fn) => fn())
   agendarGravacao()
+  if (bancoAtivo()) agendarInvalidarConsultas()
 }
 
 function subscrever(fn: () => void) {
@@ -336,8 +381,99 @@ export function useVisitas(): Visita[] {
   return useSyncExternalStore(subscrever, snapshot, snapshot)
 }
 
+function mesclarPontos(cnpj: string, pontos: PontoUnidade[]) {
+  pontosPorCnpj.set(cnpj, pontos)
+}
+
+function pontoDeVisita(v: Visita): PontoUnidade {
+  return {
+    cod: v.cod,
+    data: v.data,
+    origem: v.acumulado.origem,
+    valores: { ...v.acumulado.valores },
+    cargas: v.cargas.length,
+  }
+}
+
+function upsertPonto(v: Visita) {
+  const lista = pontosPorCnpj.get(v.pdr.cnpj) ?? []
+  const i = lista.findIndex((p) => p.cod === v.cod || p.data === v.data)
+  const ponto = pontoDeVisita(v)
+  if (i >= 0) lista[i] = ponto
+  else lista.push(ponto)
+  pontosPorCnpj.set(v.pdr.cnpj, lista)
+}
+
+export function colocarNoCache(v: Visita, marcarAlterada = false) {
+  const normalizada: Visita = {
+    ...v,
+    diaAnterior: v.diaAnterior ?? [],
+    logAlteracoes: v.logAlteracoes ?? [],
+    cargas: v.cargas.map(normalizarCarga),
+  }
+  const i = estado.findIndex((x) => x.cod === v.cod)
+  estado = i >= 0
+    ? estado.map((x) => (x.cod === v.cod ? normalizada : x))
+    : [...estado, normalizada]
+  visitasAusentes.delete(v.cod)
+  normalizada.cargas.forEach((c) => reservarIdCarga(c.id))
+  upsertPonto(normalizada)
+  if (marcarAlterada) {
+    visitasAlteradas.add(v.cod)
+    notificar()
+    return
+  }
+  notificarLeitura()
+}
+
+export async function garantirVisitasNoCache(cods: number[]): Promise<void> {
+  if (!bancoAtivo() || cods.length === 0) return
+  const faltando = [...new Set(cods)].filter((c) => !estado.some((v) => v.cod === c))
+  if (faltando.length === 0) return
+  const carregadas = await carregarVisitasPorCods(faltando)
+  for (const v of carregadas) colocarNoCache(v)
+}
+
+export async function garantirVisitasPorCargas(ids: string[]): Promise<void> {
+  if (!bancoAtivo() || ids.length === 0) return
+  const carregadas = await carregarVisitasPorIdsCarga(ids)
+  for (const v of carregadas) colocarNoCache(v)
+}
+
+async function recarregarVisita(cod: number) {
+  try {
+    const v = await carregarVisitaCompleta(cod)
+    if (v) {
+      const pontos = await consultarPontosUnidade(v.pdr.cnpj)
+      mesclarPontos(v.pdr.cnpj, pontos)
+      colocarNoCache(v)
+    } else {
+      visitasAusentes.add(cod)
+      estado = estado.filter((x) => x.cod !== cod)
+      notificarLeitura()
+    }
+  } catch {
+    visitasPedidas.delete(cod)
+  } finally {
+    visitasPedidas.delete(cod)
+  }
+}
+
 export function useVisita(cod: number): Visita | undefined {
-  return useVisitas().find((v) => v.cod === cod)
+  const lista = useVisitas()
+  const local = lista.find((v) => v.cod === cod)
+  useEffect(() => {
+    if (!bancoAtivo() || !cod || local || visitasAusentes.has(cod) || visitasPedidas.has(cod)) return
+    visitasPedidas.add(cod)
+    notificarLeitura()
+    void recarregarVisita(cod)
+  }, [cod, local])
+  return local
+}
+
+export function useVisitaCarregando(cod: number): boolean {
+  useVisitas()
+  return bancoAtivo() && Boolean(cod) && !obterVisita(cod) && !visitasAusentes.has(cod)
 }
 
 /** leitura fora de componente (ex.: testes) — nas telas use useVisita */
@@ -348,6 +484,8 @@ export function obterVisita(cod: number): Visita | undefined {
 function alterarVisita(cod: number, fn: (v: Visita) => Visita) {
   estado = estado.map((v) => (v.cod === cod ? ajustarRecebimento(fn(v)) : v))
   visitasAlteradas.add(cod)
+  const atual = estado.find((v) => v.cod === cod)
+  if (atual) upsertPonto(atual)
   notificar()
 }
 
@@ -543,6 +681,12 @@ export function diaAnteriorDe(visita: Visita, data: string): DiaAnterior {
  */
 export function visitaPorCnpjEData(cnpj: string, data: string): Visita | undefined {
   return estado.find((v) => v.pdr.cnpj === cnpj && v.data === data)
+}
+
+export function codVisitaPorCnpjEData(cnpj: string, data: string): number | undefined {
+  const local = visitaPorCnpjEData(cnpj, data)
+  if (local) return local.cod
+  return pontosPorCnpj.get(cnpj)?.find((p) => p.data === data)?.cod
 }
 
 /**
@@ -1328,30 +1472,53 @@ export function criarVisitaFake(pdr: PdrCatalogo, data: string): Visita {
  * Recebe o avaliador por parâmetro para não criar dependência circular com
  * analise.ts, que já importa deste módulo.
  */
-export function substituirVisitas(
+export async function substituirVisitas(
   novas: Visita[],
   contarErros: (v: Visita) => number,
-): { certificadas: number; paraCorrecao: number } {
+  onProgresso?: (feitos: number, total: number) => void,
+): Promise<{ certificadas: number; paraCorrecao: number }> {
   let certificadas = 0
   let paraCorrecao = 0
 
-  estado = novas.map((v) => {
+  const preparadas = novas.map((v) => {
     const ajustada = ajustarRecebimento(v)
     const comErro = contarErros(ajustada) > 0
     if (comErro) paraCorrecao++
     else certificadas++
-    return { ...ajustada, rodada: 1, situacao: comErro ? 'central-correcao' : 'certificada' }
+    return { ...ajustada, rodada: 1, situacao: comErro ? 'central-correcao' : 'certificada' } as Visita
   })
 
-  // tudo passa a ser conteúdo do usuário: nada mais vem do gerador
   baseSubstituida = true
-  zerarRemoto = true
+  zerarRemoto = false
   visitasAlteradas.clear()
+  pontosPorCnpj.clear()
+
+  if (bancoAtivo()) {
+    estado = []
+    hidratando = true
+    try {
+      await apagarTodasVisitas()
+      await importarVisitasLote(preparadas, onProgresso)
+      registrarFalha(null)
+    } catch (e) {
+      registrarFalha(
+        e instanceof Error ? `Importação: ${e.message}` : 'Falha ao importar no banco.',
+      )
+      throw e
+    } finally {
+      hidratando = false
+      invalidarConsultas()
+      notificarLeitura()
+    }
+    return { certificadas, paraCorrecao }
+  }
+
+  estado = preparadas
   estado.forEach((v) => {
     visitasAlteradas.add(v.cod)
     v.cargas.forEach((c) => reservarIdCarga(c.id))
   })
-
+  zerarRemoto = true
   notificar()
   return { certificadas, paraCorrecao }
 }
@@ -1361,11 +1528,26 @@ export function substituirVisitas(
  * da importação: senão o próximo carregamento traria o gerador de volta e a
  * tela voltaria a mostrar as visitas de demonstração.
  */
-export function limparVisitas() {
+export async function limparVisitas() {
   estado = []
   baseSubstituida = true
-  zerarRemoto = true
+  zerarRemoto = false
   visitasAlteradas.clear()
+  pontosPorCnpj.clear()
+  if (bancoAtivo()) {
+    hidratando = true
+    try {
+      await apagarTodasVisitas()
+      registrarFalha(null)
+    } catch (e) {
+      registrarFalha(e instanceof Error ? e.message : 'Falha ao zerar o banco.')
+    } finally {
+      hidratando = false
+      invalidarConsultas()
+    }
+  } else {
+    zerarRemoto = true
+  }
   notificar()
 }
 
@@ -1392,32 +1574,39 @@ export function visitasPorCnpj(cnpj: string): Visita[] {
     })
 }
 
+export function datasUnidade(cnpj: string): string[] {
+  const pontos = pontosPorCnpj.get(cnpj)
+  if (pontos?.length) return pontos.map((p) => p.data)
+  return visitasPorCnpj(cnpj).map((v) => v.data)
+}
+
+export function pontoUnidade(cnpj: string, data: string): PontoUnidade | undefined {
+  return pontosPorCnpj.get(cnpj)?.find((p) => p.data === data)
+}
+
 const NOMES_MES_HIST = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
-/**
- * Histórico real da unidade: cada visita no banco vira um ponto. Sem visita
- * naquele dia, o dia não entra — não se preenche calendário. Import de
- * acumulado entra aqui (visita INSERÇÃO_AUTO). A regra 2.5 compara estes pontos.
- */
-export function historicoAcumuladoUnidade(cnpj: string, ate: Date): HistoricoAcumulado {
+function historicoDePontos(
+  pontos: { data: string; origem: Acumulado['origem']; valores: Acumulado['valores']; cargas: number }[],
+  ate: Date,
+): HistoricoAcumulado {
   const limite = ate.getFullYear() * 10000 + (ate.getMonth() + 1) * 100 + ate.getDate()
   const porDia = new Map<number, AcumuladoPeriodo>()
-  for (const v of estado) {
-    if (v.pdr.cnpj !== cnpj) continue
-    const n = dataComparavel(v.data)
+  for (const p of pontos) {
+    const n = dataComparavel(p.data)
     if (!n || n > limite) continue
     const atual: AcumuladoPeriodo = {
-      periodo: v.data,
-      origem: v.acumulado.origem,
-      negativa: v.acumulado.valores.Negativa,
-      declarada: v.acumulado.valores.Declarada,
-      positiva: v.acumulado.valores.Positiva,
-      participante: v.acumulado.valores.Participante,
-      cargas: v.cargas.length,
+      periodo: p.data,
+      origem: p.origem,
+      negativa: p.valores.Negativa,
+      declarada: p.valores.Declarada,
+      positiva: p.valores.Positiva,
+      participante: p.valores.Participante,
+      cargas: p.cargas,
       visitas: 1,
     }
     const prev = porDia.get(n)
-    const tot = (p: AcumuladoPeriodo) => p.negativa + p.declarada + p.positiva + p.participante
+    const tot = (x: AcumuladoPeriodo) => x.negativa + x.declarada + x.positiva + x.participante
     if (!prev || tot(atual) >= tot(prev)) porDia.set(n, atual)
   }
   const dias = [...porDia.entries()]
@@ -1433,6 +1622,25 @@ export function historicoAcumuladoUnidade(cnpj: string, ate: Date): HistoricoAcu
     mesesMap.set(rotulo, { ...d, periodo: rotulo })
   }
   return { dias, meses: [...mesesMap.values()].reverse() }
+}
+
+/**
+ * Histórico real da unidade: cada visita no banco vira um ponto. Sem visita
+ * naquele dia, o dia não entra — não se preenche calendário. Import de
+ * acumulado entra aqui (visita INSERÇÃO_AUTO). A regra 2.5 compara estes pontos.
+ */
+export function historicoAcumuladoUnidade(cnpj: string, ate: Date): HistoricoAcumulado {
+  const cached = pontosPorCnpj.get(cnpj)
+  const pontos = cached
+    ?? estado
+      .filter((v) => v.pdr.cnpj === cnpj)
+      .map((v) => ({
+        data: v.data,
+        origem: v.acumulado.origem,
+        valores: v.acumulado.valores,
+        cargas: v.cargas.length,
+      }))
+  return historicoDePontos(pontos, ate)
 }
 
 /** retorna os acumulados importados (visitas com INSERÇÃO_AUTO) por CNPJ/data */
@@ -1744,18 +1952,16 @@ export function salvarParametros(novo: ParametrosRegras) {
   notificarParametros()
 }
 
-/** boot: troca o mock pelo que está no Postgres. Banco vazio = fila vazia. */
+/** boot: troca o mock pelo catálogo do Postgres. Visitas entram sob demanda. */
 export async function hidratarDoBanco(): Promise<void> {
   if (!bancoAtivo()) return
   hidratando = true
   try {
-    const dados = await carregarTudo()
-    estado = dados.visitas.map((v) => ({
-      ...v,
-      diaAnterior: v.diaAnterior ?? [],
-      logAlteracoes: v.logAlteracoes ?? [],
-      cargas: v.cargas.map(normalizarCarga),
-    }))
+    const dados = await carregarBoot()
+    estado = []
+    pontosPorCnpj.clear()
+    visitasAusentes.clear()
+    visitasPedidas.clear()
     if (dados.pdrs.length) pdrsCatalogo = normalizarCatalogo(dados.pdrs)
     if (dados.parametros) parametros = dados.parametros
     if (dados.usuarios.length) {
@@ -1774,10 +1980,14 @@ export async function hidratarDoBanco(): Promise<void> {
     atualizarLogado()
     visitasAlteradas.clear()
     baseSubstituida = true
-    estado.forEach((v) => v.cargas.forEach((c) => reservarIdCarga(c.id)))
-    const maiorCod = estado.reduce((m, v) => Math.max(m, v.cod), 0)
-    if (maiorCod >= 900000) contadorFake = maiorCod
+    try {
+      const maior = await maiorCodVisita()
+      if (maior >= 900000) contadorFake = maior
+    } catch {
+      // catálogo sobe mesmo se a tabela de visitas ainda não existir
+    }
     registrarFalha(null)
+    invalidarConsultas()
   } catch (e) {
     registrarFalha(
       e instanceof Error
@@ -1801,9 +2011,23 @@ export function escutarBanco() {
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'visitas' },
-      () => {
+      (payload) => {
         if (Date.now() < ignorarRealtimeAte) return
-        void hidratarDoBanco()
+        invalidarConsultas()
+        const row = (payload.new ?? payload.old) as { cod?: number } | null
+        const cod = Number(row?.cod)
+        if (cod && estado.some((v) => v.cod === cod)) void recarregarVisita(cod)
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'cargas' },
+      (payload) => {
+        if (Date.now() < ignorarRealtimeAte) return
+        invalidarConsultas()
+        const row = (payload.new ?? payload.old) as { visita_cod?: number } | null
+        const cod = Number(row?.visita_cod)
+        if (cod && estado.some((v) => v.cod === cod)) void recarregarVisita(cod)
       },
     )
     .subscribe()

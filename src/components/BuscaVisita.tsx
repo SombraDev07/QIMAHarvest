@@ -1,34 +1,70 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SituacaoBadge } from './ui'
 import { IconLupa, IconX } from './icons'
 import type { Visita } from '../types'
+import { bancoAtivo } from '../backend/cliente'
+import { buscarVisitas, type VisitaBusca } from '../backend/consultas'
+import { useVisitas } from '../store'
 
 const MAX_RESULTADOS = 8
 
-export default function BuscaVisita({ visitas }: { visitas: Visita[] }) {
+function filtrarLocal(visitas: Visita[], termo: string): VisitaBusca[] {
+  const t = termo.trim().toLowerCase()
+  if (t.length < 2) return []
+  const soDigitos = t.replace(/\D/g, '')
+  return visitas
+    .filter((v) => {
+      if (String(v.cod).includes(t)) return true
+      if (soDigitos && v.pdr.cnpj.replace(/\D/g, '').includes(soDigitos)) return true
+      if (v.pdr.nome.toLowerCase().includes(t)) return true
+      if (v.pdr.cidade.toLowerCase().includes(t)) return true
+      if (v.consultor.toLowerCase().includes(t)) return true
+      return false
+    })
+    .slice(0, MAX_RESULTADOS)
+    .map((v) => ({
+      cod: v.cod,
+      data: v.data,
+      situacao: v.situacao,
+      consultor: v.consultor,
+      pdr: { nome: v.pdr.nome, cnpj: v.pdr.cnpj, cidade: v.pdr.cidade, uf: v.pdr.uf },
+    }))
+}
+
+export default function BuscaVisita() {
   const [termo, setTermo] = useState('')
   const [aberto, setAberto] = useState(false)
   const [indice, setIndice] = useState(0)
+  const [remoto, setRemoto] = useState<VisitaBusca[]>([])
   const caixa = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
+  const locais = useVisitas()
+
+  useEffect(() => {
+    if (!bancoAtivo()) return
+    const t = termo.trim()
+    if (t.length < 2) return
+    let viva = true
+    const timer = window.setTimeout(() => {
+      void buscarVisitas(t, MAX_RESULTADOS)
+        .then((r) => {
+          if (viva) setRemoto(r)
+        })
+        .catch(() => {
+          if (viva) setRemoto([])
+        })
+    }, 280)
+    return () => {
+      viva = false
+      window.clearTimeout(timer)
+    }
+  }, [termo])
 
   const resultados = useMemo(() => {
-    const t = termo.trim().toLowerCase()
-    if (t.length < 2) return []
-    const soDigitos = t.replace(/\D/g, '')
-
-    return visitas
-      .filter((v) => {
-        if (String(v.cod).includes(t)) return true
-        if (soDigitos && v.pdr.cnpj.replace(/\D/g, '').includes(soDigitos)) return true
-        if (v.pdr.nome.toLowerCase().includes(t)) return true
-        if (v.pdr.cidade.toLowerCase().includes(t)) return true
-        if (v.consultor.toLowerCase().includes(t)) return true
-        return false
-      })
-      .slice(0, MAX_RESULTADOS)
-  }, [visitas, termo])
+    if (termo.trim().length < 2) return []
+    return bancoAtivo() ? remoto : filtrarLocal(locais, termo)
+  }, [remoto, locais, termo])
 
   function abrir(cod: number) {
     setAberto(false)

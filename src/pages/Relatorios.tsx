@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useT } from '../i18n'
 import { Breadcrumb, PageHead, Panel, Toast } from '../components/ui'
 import { IconDownload, IconInfo, IconRelatorios, IconVisitas } from '../components/icons'
-import { useVisitas } from '../store'
+import { useVersaoConsultas, useVisitas } from '../store'
 import { situacaoPorId, SITUACOES } from '../data/mock'
 import {
   COLUNAS_CARGA,
@@ -11,12 +11,20 @@ import {
   relatorioVisitas,
   resumoRelatorio,
 } from '../relatorios/planilhas'
-import { dataComparavel, dataIsoComparavel, fmtNum } from '../format'
+import { dataComparavel, dataIsoComparavel, fmtDataHora, fmtNum } from '../format'
 import type { SituacaoId } from '../types'
+import { bancoAtivo } from '../backend/cliente'
+import {
+  baixarRelatorioSafra,
+  consultarRelatoriosSafra,
+  csvRelatorioCargas,
+  csvRelatorioVisitas,
+  dispararGeracaoSafra,
+  resumoExportacao,
+  type RelatorioSafra,
+} from '../backend/consultas'
 
-/** baixa o CSV com BOM, para o Excel abrir com acento certo */
 function baixarCsv(conteudo: string, nome: string) {
-  // BOM explícito por escape: o caractere literal no fonte é invisível e o lint acusa
   const blob = new Blob(['\uFEFF' + conteudo], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -35,14 +43,20 @@ function CardRelatorio({
   colunas,
   linhas,
   rotuloLinhas,
+  gerando,
+  rotuloBotao,
+  desabilitado,
   onGerar,
 }: {
-  icone: React.ReactNode
+  icone: ReactNode
   titulo: string
   descricao: string
   colunas: number
   linhas: number
   rotuloLinhas: string
+  gerando?: boolean
+  rotuloBotao?: string
+  desabilitado?: boolean
   onGerar: () => void
 }) {
   const t = useT()
@@ -64,10 +78,10 @@ function CardRelatorio({
       <button
         className="btn btn--primary"
         type="button"
-        disabled={linhas === 0}
+        disabled={desabilitado || linhas === 0 || gerando}
         onClick={onGerar}
       >
-        <IconDownload /> {t('Gerar CSV')}
+        <IconDownload /> {gerando ? t('Gerando…') : (rotuloBotao ?? t('Gerar CSV'))}
       </button>
     </article>
   )
@@ -75,11 +89,48 @@ function CardRelatorio({
 
 export default function Relatorios() {
   const todas = useVisitas()
+  const versao = useVersaoConsultas()
   const t = useT()
   const [filtro, setFiltro] = useState<'Todas' | SituacaoId>('Todas')
   const [de, setDe] = useState('')
   const [ate, setAte] = useState('')
   const [aviso, setAviso] = useState<string | null>(null)
+  const [remoto, setRemoto] = useState<{ visitas: number; cargas: number } | null>(null)
+  const [gerando, setGerando] = useState<'visitas' | 'cargas' | 'safra' | null>(null)
+  const [safra, setSafra] = useState<RelatorioSafra[]>([])
+
+  const semRecorte = filtro === 'Todas' && !de && !ate
+  const usaSafraPronta = bancoAtivo() && semRecorte
+
+  useEffect(() => {
+    if (!bancoAtivo()) return
+    let viva = true
+    void resumoExportacao(de, ate, filtro)
+      .then((r) => {
+        if (viva) setRemoto(r)
+      })
+      .catch(() => {
+        if (viva) setRemoto({ visitas: 0, cargas: 0 })
+      })
+    return () => {
+      viva = false
+    }
+  }, [de, ate, filtro, versao])
+
+  useEffect(() => {
+    if (!bancoAtivo()) return
+    let viva = true
+    void consultarRelatoriosSafra()
+      .then((r) => {
+        if (viva) setSafra(r)
+      })
+      .catch(() => {
+        if (viva) setSafra([])
+      })
+    return () => {
+      viva = false
+    }
+  }, [versao, gerando])
 
   const visitas = useMemo(() => {
     const inicio = de ? dataIsoComparavel(de) : null
@@ -94,13 +145,72 @@ export default function Relatorios() {
     })
   }, [todas, filtro, de, ate])
 
-  const resumo = useMemo(() => resumoRelatorio(visitas), [visitas])
-  const semRecorte = filtro === 'Todas' && !de && !ate
+  const resumoLocal = useMemo(() => resumoRelatorio(visitas), [visitas])
+  const resumo = bancoAtivo() ? (remoto ?? { visitas: 0, cargas: 0 }) : resumoLocal
+  const totalSistema = bancoAtivo() ? (remoto?.visitas ?? 0) : todas.length
+  const metaVisitas = safra.find((s) => s.tipo === 'visitas')
+  const metaCargas = safra.find((s) => s.tipo === 'cargas')
 
-  /** nome do arquivo carrega o recorte, para não confundir dois downloads */
   const sufixo = [filtro === 'Todas' ? 'todas' : filtro, de || null, ate || null]
     .filter(Boolean)
     .join('_')
+
+  async function gerar(tipo: 'visitas' | 'cargas') {
+    setGerando(tipo)
+    try {
+      if (usaSafraPronta) {
+        const csv = await baixarRelatorioSafra(tipo)
+        if (!csv) throw new Error('Ainda não há arquivo da safra. Use “Atualizar agora”.')
+        const n = tipo === 'visitas' ? (metaVisitas?.linhas ?? 0) : (metaCargas?.linhas ?? 0)
+        baixarCsv(csv, `${tipo}-safra-${hoje()}.csv`)
+        setAviso(`Relatório de ${fmtNum(n)} ${tipo === 'visitas' ? 'visita(s)' : 'carga(s)'} baixado.`)
+        return
+      }
+      const csv = bancoAtivo()
+        ? tipo === 'visitas'
+          ? await csvRelatorioVisitas(de, ate, filtro)
+          : await csvRelatorioCargas(de, ate, filtro)
+        : tipo === 'visitas'
+          ? relatorioVisitas(visitas)
+          : relatorioCargas(visitas)
+      const n = tipo === 'visitas' ? resumo.visitas : resumo.cargas
+      baixarCsv(csv, `${tipo}-${sufixo}-${hoje()}.csv`)
+      setAviso(`Relatório de ${fmtNum(n)} ${tipo === 'visitas' ? 'visita(s)' : 'carga(s)'} gerado.`)
+    } catch (e) {
+      setAviso(e instanceof Error ? e.message : 'Não foi possível gerar o relatório.')
+    } finally {
+      setGerando(null)
+    }
+  }
+
+  async function atualizarSafra() {
+    setGerando('safra')
+    try {
+      await dispararGeracaoSafra()
+      setAviso('Pedido enviado. O servidor monta os arquivos e libera o download.')
+      const limite = Date.now() + 14 * 60 * 1000
+      while (Date.now() < limite) {
+        await new Promise((r) => setTimeout(r, 4000))
+        const r = await consultarRelatoriosSafra()
+        setSafra(r)
+        if (r.length > 0 && r.every((s) => !s.gerando)) {
+          if (r.some((s) => s.erro)) {
+            setAviso(`Falha ao gerar: ${r.find((s) => s.erro)?.erro}`)
+          } else {
+            setAviso('Safra atualizada no servidor. Já pode baixar.')
+          }
+          return
+        }
+      }
+      setAviso('Ainda gerando no servidor. Atualize a página em alguns minutos.')
+    } catch (e) {
+      setAviso(e instanceof Error ? e.message : 'Não foi possível atualizar a safra.')
+    } finally {
+      setGerando(null)
+    }
+  }
+
+  const gerandoSafra = Boolean(metaVisitas?.gerando || metaCargas?.gerando || gerando === 'safra')
 
   return (
     <main className="page">
@@ -109,6 +219,31 @@ export default function Relatorios() {
         titulo={t("Relatórios")}
         subtitulo={t("Exportação das visitas e das cargas no mesmo formato que a importação lê")}
       />
+
+      {bancoAtivo() && (
+        <Panel
+          numero="0"
+          titulo={t('Safra atual')}
+          hint={t('O Postgres gera os dois CSVs no início de cada hora')}
+        >
+          <div className="panel__body">
+            <p className="cell-muted" style={{ margin: '0 0 12px' }}>
+              {metaVisitas?.geradoEm
+                ? `Última geração ${fmtDataHora(metaVisitas.geradoEm)} · ${fmtNum(metaVisitas.linhas)} visita(s) e ${fmtNum(metaCargas?.linhas ?? 0)} carga(s).`
+                : 'Ainda não há arquivo. Clique em Atualizar agora (ou espere a virada da hora).'}
+              {metaVisitas?.erro ? ` Falha: ${metaVisitas.erro}` : ''}
+            </p>
+            <button
+              className="btn btn--ghost"
+              type="button"
+              disabled={gerandoSafra}
+              onClick={() => void atualizarSafra()}
+            >
+              {gerandoSafra ? 'Gerando no servidor…' : 'Atualizar agora'}
+            </button>
+          </div>
+        </Panel>
+      )}
 
       <Panel numero="1" titulo={t("Recorte")} hint={t("Vale para os dois relatórios")}>
         <div className="panel__body">
@@ -145,8 +280,8 @@ export default function Relatorios() {
           <div className="panel__body" style={{ padding: '10px 0 0' }}>
             <span className="cell-muted">
               {semRecorte
-                ? `${fmtNum(todas.length)} visita(s) no sistema — nenhum recorte aplicado.`
-                : `${fmtNum(visitas.length)} de ${fmtNum(todas.length)} visita(s) no recorte.`}
+                ? `${fmtNum(totalSistema)} visita(s) no sistema — nenhum recorte aplicado.`
+                : `${fmtNum(resumo.visitas)} visita(s) no recorte.`}
             </span>
             {!semRecorte && (
               <button
@@ -173,12 +308,12 @@ export default function Relatorios() {
           titulo={t("Relatório de visitas")}
           descricao="Uma linha por visita, com PDR, horários, respostas do formulário, acumulado da safra e os volumes do dia somados das cargas."
           colunas={COLUNAS_VISITA.length}
-          linhas={resumo.visitas}
+          linhas={usaSafraPronta ? (metaVisitas?.linhas ?? 0) : resumo.visitas}
           rotuloLinhas="visita(s)"
-          onGerar={() => {
-            baixarCsv(relatorioVisitas(visitas), `visitas-${sufixo}-${hoje()}.csv`)
-            setAviso(`Relatório de ${fmtNum(resumo.visitas)} visita(s) gerado.`)
-          }}
+          gerando={gerando === 'visitas' || gerandoSafra}
+          rotuloBotao={usaSafraPronta ? t('Baixar CSV') : t('Gerar CSV')}
+          desabilitado={usaSafraPronta && (metaVisitas?.linhas ?? 0) === 0}
+          onGerar={() => void gerar('visitas')}
         />
 
         <CardRelatorio
@@ -186,12 +321,12 @@ export default function Relatorios() {
           titulo={t("Relatório de cargas")}
           descricao="Uma linha por carga, vinculada à visita pelo código, com romaneio, pesos, classificação, produtor, placa e rateio."
           colunas={COLUNAS_CARGA.length}
-          linhas={resumo.cargas}
+          linhas={usaSafraPronta ? (metaCargas?.linhas ?? 0) : resumo.cargas}
           rotuloLinhas="carga(s)"
-          onGerar={() => {
-            baixarCsv(relatorioCargas(visitas), `cargas-${sufixo}-${hoje()}.csv`)
-            setAviso(`Relatório de ${fmtNum(resumo.cargas)} carga(s) gerado.`)
-          }}
+          gerando={gerando === 'cargas' || gerandoSafra}
+          rotuloBotao={usaSafraPronta ? t('Baixar CSV') : t('Gerar CSV')}
+          desabilitado={usaSafraPronta && (metaCargas?.linhas ?? 0) === 0}
+          onGerar={() => void gerar('cargas')}
         />
       </div>
 
@@ -200,8 +335,8 @@ export default function Relatorios() {
         <span>
           Os dois arquivos saem com os mesmos cabeçalhos que a tela de{' '}
           <strong>Importar planilha</strong> espera, então o relatório volta para o sistema sem
-          ajuste. Três colunas saem em branco por não existirem no modelo: o bloco C e a
-          divergência de reteste.
+          ajuste. Sem recorte, o download é o arquivo que o servidor atualiza a cada hora. Recorte
+          de data ou situação ainda gera na hora.
         </span>
       </div>
 

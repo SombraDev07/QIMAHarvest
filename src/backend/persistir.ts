@@ -105,7 +105,7 @@ export function cargaParaLinha(visitaCod: number, c: Carga): LinhaCarga {
   }
 }
 
-function pdrDeLinha(row: LinhaVisita): Pdr {
+export function pdrDeLinha(row: LinhaVisita): Pdr {
   return {
     nome: String(row.pdr_nome ?? ''),
     cnpj: String(row.pdr_cnpj ?? ''),
@@ -149,7 +149,7 @@ function acumuladoDeLinha(row: LinhaVisita): Acumulado {
   }
 }
 
-function cargaDeLinha(row: LinhaCarga): Carga {
+export function cargaDeLinha(row: LinhaCarga): Carga {
   return {
     id: String(row.id),
     data: row.data ? dataIsoParaBr(String(row.data)) : '',
@@ -171,7 +171,7 @@ function cargaDeLinha(row: LinhaCarga): Carga {
   }
 }
 
-function montarVisita(
+export function montarVisita(
   row: LinhaVisita,
   extras: {
     cargas: Carga[]
@@ -367,6 +367,8 @@ export async function persistirVisitas(lista: Visita[]): Promise<void> {
 export async function apagarTodasVisitas(): Promise<void> {
   const sb = supabase()
   if (!sb) return
+  const { error: rpc } = await sb.rpc('zerar_visitas')
+  if (!rpc) return
   const { error } = await sb.from('visitas').delete().gte('cod', 0)
   if (error) throw erro('apagar visitas', error)
 }
@@ -592,4 +594,350 @@ export async function carregarTudo(): Promise<{
   }))
 
   return { visitas, pdrs, parametros, usuarios }
+}
+
+function pdrsDeLinhas(linhas: LinhaVisita[]): PdrCatalogo[] {
+  return linhas.map((p) => ({
+    id: String(p.id),
+    nome: String(p.nome ?? ''),
+    cnpj: String(p.cnpj ?? ''),
+    cidade: String(p.cidade ?? ''),
+    uf: String(p.uf ?? ''),
+    situacao: p.situacao === 'Inativo' ? 'Inativo' : 'Ativo',
+    latitude: p.latitude == null ? undefined : String(p.latitude),
+    longitude: p.longitude == null ? undefined : String(p.longitude),
+    telefone: (p.telefone as string | null) ?? undefined,
+    email: (p.email as string | null) ?? undefined,
+    observacao: (p.observacao as string | null) ?? undefined,
+  }))
+}
+
+function usuariosDeLinhas(linhas: LinhaVisita[]): Usuario[] {
+  return linhas.map((u) => ({
+    id: String(u.id),
+    nome: String(u.nome ?? ''),
+    login: String(u.login ?? ''),
+    senha: (u.senha as string | null) ?? undefined,
+    email: (u.email as string | null) ?? undefined,
+    telefone: (u.telefone as string | null) ?? undefined,
+    cpf: (u.cpf as string | null) ?? undefined,
+    perfil: (u.perfil as Usuario['perfil']) ?? 'Support',
+    situacao: u.situacao === 'Inativo' ? 'Inativo' : 'Ativo',
+  }))
+}
+
+function parametrosDeLinha(pr: LinhaVisita | null): ParametrosRegras | null {
+  if (!pr) return null
+  return {
+    limiteDescontoErro: Number(pr.limite_desconto_erro),
+    minDigitosPlaca: Number(pr.min_digitos_placa),
+    saltoMaxRomaneio: Number(pr.salto_max_romaneio),
+    limiteDiaAnteriorTecnologia: Number(pr.limite_dia_anterior_tecnologia),
+    toleranciaHorarioMin: Number(pr.tolerancia_horario_min),
+    caixaFitaMin: Number(pr.caixa_fita_min),
+    caixaFitaMax: Number(pr.caixa_fita_max),
+    mensagemErroChat: String(pr.mensagem_erro_chat),
+    regrasAtivas: (pr.regras_ativas as ParametrosRegras['regrasAtivas']) ?? {},
+  }
+}
+
+/** boot: catálogo, parâmetros e usuários — sem visitas nem cargas */
+export async function carregarBoot(): Promise<{
+  pdrs: PdrCatalogo[]
+  parametros: ParametrosRegras | null
+  usuarios: Usuario[]
+}> {
+  const sb = supabase()
+  if (!sb) return { pdrs: [], parametros: null, usuarios: [] }
+  const [pdrsRes, parRes, usuRes] = await Promise.all([
+    todasAsLinhas(sb, 'pdrs'),
+    sb.from('parametros').select('*').eq('id', 1).maybeSingle(),
+    todasAsLinhas(sb, 'usuarios'),
+  ])
+  if (parRes.error) throw erro('carregar', parRes.error)
+  return {
+    pdrs: pdrsDeLinhas(pdrsRes),
+    parametros: parametrosDeLinha((parRes.data as LinhaVisita | null) ?? null),
+    usuarios: usuariosDeLinhas(usuRes),
+  }
+}
+
+export type PontoUnidade = {
+  cod: number
+  data: string
+  origem: Acumulado['origem']
+  valores: Acumulado['valores']
+  cargas: number
+}
+
+async function linhasPorVisitas(
+  sb: NonNullable<ReturnType<typeof supabase>>,
+  tabela: string,
+  cods: number[],
+): Promise<LinhaVisita[]> {
+  if (cods.length === 0) return []
+  const linhas: LinhaVisita[] = []
+  for (let i = 0; i < cods.length; i += 200) {
+    const fatia = cods.slice(i, i + 200)
+    let de = 0
+    for (;;) {
+      const { data, error: e } = await sb
+        .from(tabela)
+        .select('*')
+        .in('visita_cod', fatia)
+        .range(de, de + TAMANHO_PAGINA - 1)
+      if (e) throw erro(`carregar ${tabela}`, e)
+      linhas.push(...((data ?? []) as LinhaVisita[]))
+      if (!data || data.length < TAMANHO_PAGINA) break
+      de += TAMANHO_PAGINA
+    }
+  }
+  return linhas
+}
+
+async function extrasPorCods(
+  sb: NonNullable<ReturnType<typeof supabase>>,
+  cods: number[],
+): Promise<{
+  cargasPor: Map<number, Carga[]>
+  diasPor: Map<number, DiaAnterior[]>
+  msgsPor: Map<number, Mensagem[]>
+  logsPor: Map<number, LogAlteracao[]>
+  errosPor: Map<number, ErroLiberado[]>
+  ocorPor: Map<number, Ocorrencia[]>
+}> {
+  const [cargas, dias, msgs, logs, erros, ocor] = await Promise.all([
+    linhasPorVisitas(sb, 'cargas', cods),
+    linhasPorVisitas(sb, 'dias_anteriores', cods),
+    linhasPorVisitas(sb, 'mensagens_visita', cods),
+    linhasPorVisitas(sb, 'log_alteracoes', cods),
+    linhasPorVisitas(sb, 'erros_liberados', cods),
+    linhasPorVisitas(sb, 'ocorrencias', cods),
+  ])
+
+  const cargasPor = new Map<number, Carga[]>()
+  for (const c of cargas) {
+    const lista = cargasPor.get(Number(c.visita_cod)) ?? []
+    lista.push(cargaDeLinha(c as LinhaCarga))
+    cargasPor.set(Number(c.visita_cod), lista)
+  }
+  const diasPor = new Map<number, DiaAnterior[]>()
+  for (const d of dias) {
+    const lista = diasPor.get(Number(d.visita_cod)) ?? []
+    lista.push({
+      id: String(d.id),
+      data: dataIsoParaBr(String(d.data)),
+      informouDiaAnterior: d.informou === 'Sim' ? 'Sim' : 'Não',
+      valores: {
+        Negativa: Number(d.negativa),
+        Declarada: Number(d.declarada),
+        Positiva: Number(d.positiva),
+        Participante: Number(d.participante),
+      },
+    })
+    diasPor.set(Number(d.visita_cod), lista)
+  }
+  const msgsPor = new Map<number, Mensagem[]>()
+  for (const m of msgs) {
+    const lista = msgsPor.get(Number(m.visita_cod)) ?? []
+    lista.push({
+      id: String(m.id),
+      autor: String(m.autor ?? ''),
+      papel: String(m.papel ?? ''),
+      texto: String(m.texto ?? ''),
+      ts: new Date(String(m.ts)).getTime(),
+      tipo: m.tipo === 'sistema' ? 'sistema' : 'mensagem',
+      responsavel: (m.responsavel as string | null) ?? undefined,
+    })
+    msgsPor.set(Number(m.visita_cod), lista)
+  }
+  const logsPor = new Map<number, LogAlteracao[]>()
+  for (const l of logs) {
+    const lista = logsPor.get(Number(l.visita_cod)) ?? []
+    lista.push({
+      id: String(l.id),
+      ts: new Date(String(l.ts)).getTime(),
+      por: String(l.por ?? ''),
+      origem: l.origem === 'import-correcao' ? 'import-correcao' : 'edicao',
+      planilha: String(l.planilha ?? ''),
+      tipo: (l.tipo as LogAlteracao['tipo']) ?? 'carga',
+      chave: String(l.chave ?? ''),
+      resumo: String(l.resumo ?? ''),
+    })
+    logsPor.set(Number(l.visita_cod), lista)
+  }
+  const errosPor = new Map<number, ErroLiberado[]>()
+  for (const e of erros) {
+    const lista = errosPor.get(Number(e.visita_cod)) ?? []
+    lista.push({
+      alertaId: String(e.alerta_id),
+      regra: String(e.regra ?? ''),
+      justificativa: String(e.justificativa ?? ''),
+      por: String(e.por ?? ''),
+      ts: new Date(String(e.ts)).getTime(),
+    })
+    errosPor.set(Number(e.visita_cod), lista)
+  }
+  const ocorPor = new Map<number, Ocorrencia[]>()
+  for (const o of ocor) {
+    const lista = ocorPor.get(Number(o.visita_cod)) ?? []
+    lista.push({
+      id: String(o.id),
+      tipo: String(o.tipo ?? ''),
+      gravidade: (o.gravidade as Ocorrencia['gravidade']) ?? 'Média',
+      descricao: String(o.descricao ?? ''),
+      data: o.data ? dataIsoParaBr(String(o.data)) : '',
+      status: (o.status as Ocorrencia['status']) ?? 'Aberta',
+      cargaId: (o.carga_id as string | null) ?? undefined,
+    })
+    ocorPor.set(Number(o.visita_cod), lista)
+  }
+  return { cargasPor, diasPor, msgsPor, logsPor, errosPor, ocorPor }
+}
+
+function visitaDeLinha(
+  row: LinhaVisita,
+  extras: Awaited<ReturnType<typeof extrasPorCods>>,
+): Visita {
+  const cod = Number(row.cod)
+  return montarVisita(row, {
+    cargas: extras.cargasPor.get(cod) ?? [],
+    diaAnterior: extras.diasPor.get(cod) ?? [],
+    mensagens: extras.msgsPor.get(cod) ?? [],
+    ocorrencias: extras.ocorPor.get(cod) ?? [],
+    errosLiberados: extras.errosPor.get(cod) ?? [],
+    logAlteracoes: extras.logsPor.get(cod) ?? [],
+    procedimentos: [],
+    historico: [],
+  })
+}
+
+export async function carregarVisitaCompleta(cod: number): Promise<Visita | null> {
+  const sb = supabase()
+  if (!sb) return null
+  const { data, error: e } = await sb.from('visitas').select('*').eq('cod', cod).maybeSingle()
+  if (e) throw erro(`visita ${cod}`, e)
+  if (!data) return null
+  const extras = await extrasPorCods(sb, [cod])
+  return visitaDeLinha(data as LinhaVisita, extras)
+}
+
+export async function carregarVisitasPorCods(cods: number[]): Promise<Visita[]> {
+  const sb = supabase()
+  if (!sb || cods.length === 0) return []
+  const unicos = [...new Set(cods)]
+  const rows: LinhaVisita[] = []
+  for (let i = 0; i < unicos.length; i += 200) {
+    const { data, error: e } = await sb.from('visitas').select('*').in('cod', unicos.slice(i, i + 200))
+    if (e) throw erro('visitas por código', e)
+    rows.push(...((data ?? []) as LinhaVisita[]))
+  }
+  const extras = await extrasPorCods(sb, rows.map((r) => Number(r.cod)))
+  return rows.map((row) => visitaDeLinha(row, extras))
+}
+
+export async function carregarVisitasPorIdsCarga(ids: string[]): Promise<Visita[]> {
+  const sb = supabase()
+  if (!sb || ids.length === 0) return []
+  const cods = new Set<number>()
+  for (let i = 0; i < ids.length; i += 80) {
+    const { data, error: e } = await sb
+      .from('cargas')
+      .select('visita_cod')
+      .in('id', ids.slice(i, i + 80))
+    if (e) throw erro('cargas por id', e)
+    for (const r of data ?? []) cods.add(Number(r.visita_cod))
+  }
+  return carregarVisitasPorCods([...cods])
+}
+
+export async function maiorCodVisita(): Promise<number> {
+  const sb = supabase()
+  if (!sb) return 0
+  const { data, error: e } = await sb
+    .from('visitas')
+    .select('cod')
+    .order('cod', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (e) throw erro('maior código', e)
+  return Number(data?.cod ?? 0)
+}
+
+export async function consultarPontosUnidade(cnpj: string): Promise<PontoUnidade[]> {
+  const sb = supabase()
+  if (!sb || !cnpj) return []
+  const { data, error: e } = await sb
+    .from('visitas')
+    .select(
+      'cod, data, acumulado_origem, acumulado_negativa, acumulado_declarada, acumulado_positiva, acumulado_participante',
+    )
+    .eq('pdr_cnpj', cnpj)
+    .order('data', { ascending: false })
+  if (e) throw erro('histórico da unidade', e)
+  const rows = (data ?? []) as LinhaVisita[]
+  const cods = rows.map((r) => Number(r.cod))
+  const qtd = new Map<number, number>()
+  for (let i = 0; i < cods.length; i += 200) {
+    const fatia = cods.slice(i, i + 200)
+    const { data: cargas, error: e2 } = await sb.from('cargas').select('visita_cod').in('visita_cod', fatia)
+    if (e2) throw erro('contagem de cargas', e2)
+    for (const c of cargas ?? []) {
+      const cod = Number(c.visita_cod)
+      qtd.set(cod, (qtd.get(cod) ?? 0) + 1)
+    }
+  }
+  return rows.map((r) => {
+    const origem = r.acumulado_origem
+    return {
+      cod: Number(r.cod),
+      data: dataIsoParaBr(String(r.data)),
+      origem: origem === 'RTV' || origem === 'B2B' ? origem : 'PDR',
+      valores: {
+        Negativa: Number(r.acumulado_negativa ?? 0),
+        Declarada: Number(r.acumulado_declarada ?? 0),
+        Positiva: Number(r.acumulado_positiva ?? 0),
+        Participante: Number(r.acumulado_participante ?? 0),
+      },
+      cargas: qtd.get(Number(r.cod)) ?? 0,
+    }
+  })
+}
+
+const FATIA_VISITA = 120
+const FATIA_CARGA = 600
+
+export async function importarVisitasLote(
+  lista: Visita[],
+  onProgresso?: (feitos: number, total: number) => void,
+): Promise<void> {
+  const sb = supabase()
+  if (!sb || lista.length === 0) return
+  for (let i = 0; i < lista.length; i += FATIA_VISITA) {
+    const fatia = lista.slice(i, i + FATIA_VISITA)
+    const { error: e1 } = await sb.from('visitas').upsert(fatia.map(visitaParaLinha))
+    if (e1) throw erro('importar visitas', e1)
+    const cargas = fatia.flatMap((v) => v.cargas.map((c) => cargaParaLinha(v.cod, c)))
+    for (let j = 0; j < cargas.length; j += FATIA_CARGA) {
+      const { error: e2 } = await sb.from('cargas').upsert(cargas.slice(j, j + FATIA_CARGA))
+      if (e2) throw erro('importar cargas', e2)
+    }
+    const dias = fatia.flatMap((v) =>
+      v.diaAnterior.map((d) => ({
+        id: d.id,
+        visita_cod: v.cod,
+        data: dataBrParaIso(d.data),
+        informou: d.informouDiaAnterior,
+        negativa: d.valores.Negativa,
+        declarada: d.valores.Declarada,
+        positiva: d.valores.Positiva,
+        participante: d.valores.Participante,
+      })),
+    )
+    if (dias.length) {
+      const { error: e3 } = await sb.from('dias_anteriores').upsert(dias)
+      if (e3) throw erro('importar dia anterior', e3)
+    }
+    onProgresso?.(Math.min(i + FATIA_VISITA, lista.length), lista.length)
+  }
 }

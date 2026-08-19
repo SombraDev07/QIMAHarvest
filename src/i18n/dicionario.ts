@@ -189,6 +189,11 @@ export const EN: Record<string, string> = {
   'Relatório de visitas': 'Visits report',
   'Relatório de cargas': 'Loads report',
   'Gerar CSV': 'Generate CSV',
+  'Baixar CSV': 'Download CSV',
+  'Gerando…': 'Generating…',
+  'Safra atual': 'Current harvest',
+  'O Postgres gera os dois CSVs no início de cada hora':
+    'Postgres generates both CSVs at the start of each hour',
   colunas: 'columns',
 
   /* ---------------- importação ---------------- */

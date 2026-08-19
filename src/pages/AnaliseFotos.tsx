@@ -3,9 +3,8 @@ import { Link } from 'react-router-dom'
 import { useT } from '../i18n'
 import { Breadcrumb, PageHead, Panel, Toast } from '../components/ui'
 import { IconFotos, IconInfo } from '../components/icons'
-import { useVisitas } from '../store'
+import { useFilaFotos } from '../painel'
 import {
-  filaAnaliseFotos,
   lerFilaEmMassa,
   type ItemFilaFoto,
   type ResumoLeituraMassa,
@@ -30,8 +29,7 @@ function rotuloStatus(s: StatusConferencia) {
 
 export default function AnaliseFotos() {
   const t = useT()
-  const visitas = useVisitas()
-  const fila = useMemo(() => filaAnaliseFotos(visitas), [visitas])
+  const fila = useFilaFotos()
   const [filtro, setFiltro] = useState<(typeof FILTROS)[number]['id']>('todas')
   const [selecionada, setSelecionada] = useState<string | null>(null)
   const [andamento, setAndamento] = useState<{ feitos: number; total: number } | null>(null)

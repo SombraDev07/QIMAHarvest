@@ -178,6 +178,21 @@ function montarCsv<T>(colunas: Coluna<T>[], itens: T[]): string {
   return linhas.join('\r\n')
 }
 
+/** CSV a partir de objetos cujas chaves são os cabeçalhos (relatório montado no Postgres) */
+export function montarCsvDeObjetos(
+  cabecalhos: string[],
+  linhas: Record<string, unknown>[],
+  comCabecalho = true,
+): string {
+  const corpo = linhas.map((l) =>
+    cabecalhos.map((c) => campoCsv((l[c] as string | number | null | undefined) ?? '')).join(SEPARADOR),
+  )
+  return (comCabecalho ? [cabecalhos.join(SEPARADOR), ...corpo] : corpo).join('\r\n')
+}
+
+export const cabecalhosVisita = COLUNAS_VISITA.map((c) => c.cabecalho)
+export const cabecalhosCarga = COLUNAS_CARGA.map((c) => c.cabecalho)
+
 export const relatorioVisitas = (visitas: Visita[]): string =>
   montarCsv(COLUNAS_VISITA, visitas)
 

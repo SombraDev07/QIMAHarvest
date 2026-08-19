@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '../i18n'
 import { Breadcrumb, Modal, PageHead, Panel, Toast } from '../components/ui'
 import { IconAlerta, IconDownload, IconEditar, IconPlanilha, IconUpload } from '../components/icons'
@@ -18,7 +18,7 @@ import {
   type PatchCarga,
   type PatchVolumes,
 } from '../importacao/correcao'
-import { aplicarCorrecoesEmMassa, useVisitas } from '../store'
+import { aplicarCorrecoesEmMassa, garantirVisitasNoCache, garantirVisitasPorCargas, useVisitas } from '../store'
 import { analisarVisita } from '../analise'
 
 async function textoDoArquivo(file: File): Promise<string> {
@@ -140,6 +140,21 @@ export default function CorrigirVisitas() {
   const [nomeAcumulado, setNomeAcumulado] = useState('')
   const [confirmando, setConfirmando] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
+
+  useEffect(() => {
+    const idsCarga = textoCargas
+      ? analisarCorrecaoCargas(textoCargas)
+          .map((l) => l.patch?.id)
+          .filter((id): id is string => Boolean(id))
+      : []
+    const cods = [
+      ...(textoDia ? analisarCorrecaoDiaAnterior(textoDia) : []),
+      ...(textoAcumulado ? analisarCorrecaoAcumulado(textoAcumulado) : []),
+    ]
+      .map((l) => l.patch?.cod)
+      .filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
+    void Promise.all([garantirVisitasPorCargas(idsCarga), garantirVisitasNoCache(cods)])
+  }, [textoCargas, textoDia, textoAcumulado])
 
   const cargas = useMemo(
     () => (textoCargas ? conferirCargas(analisarCorrecaoCargas(textoCargas), visitas) : []),

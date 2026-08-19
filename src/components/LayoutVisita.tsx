@@ -4,7 +4,7 @@ import { LogoQima } from './Logo'
 import { Modal, Toast } from './ui'
 import { IconLink, IconLista, IconLog } from './icons'
 import { situacaoPorId } from '../data/mock'
-import { useFalhaPersistencia, useUsuarioLogado, useVisita } from '../store'
+import { useFalhaPersistencia, useUsuarioLogado, useVisita, useVisitaCarregando } from '../store'
 import { iniciais } from '../usuario'
 import MinhaSenha from './MinhaSenha'
 import BotaoSair from './BotaoSair'
@@ -38,6 +38,7 @@ export default function LayoutVisita() {
   const falhaAoGravar = useFalhaPersistencia()
   const { cod } = useParams<{ cod: string }>()
   const visita = useVisita(Number(cod))
+  const carregando = useVisitaCarregando(Number(cod))
   const [aviso, setAviso] = useState<string | null>(null)
   /** aberto quando o navegador bloqueia a cópia automática */
   const [linkManual, setLinkManual] = useState(false)
@@ -69,7 +70,7 @@ export default function LayoutVisita() {
             )}
           </div>
           <div className="visita-head__pdr">
-            {visita ? visita.pdr.nome : 'Visita não encontrada'}
+            {visita ? visita.pdr.nome : carregando ? 'Carregando…' : 'Visita não encontrada'}
             {visita && (
               <span className="visita-head__meta">
                 CNPJ {visita.pdr.cnpj} · {visita.pdr.cidade}/{visita.pdr.uf} · {visita.data}
