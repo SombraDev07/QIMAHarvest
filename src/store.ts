@@ -389,6 +389,9 @@ export function useVisitas(): Visita[] {
 
 function mesclarPontos(cnpj: string, pontos: PontoUnidade[]) {
   pontosPorCnpj.set(cnpj, pontos)
+  for (const v of estado) {
+    if (v.pdr.cnpj === cnpj && visitasAlteradas.has(v.cod)) upsertPonto(v)
+  }
 }
 
 function pontoDeVisita(v: Visita): PontoUnidade {
@@ -402,7 +405,10 @@ function pontoDeVisita(v: Visita): PontoUnidade {
 }
 
 function upsertPonto(v: Visita) {
-  const lista = pontosPorCnpj.get(v.pdr.cnpj) ?? []
+  const lista = pontosPorCnpj.get(v.pdr.cnpj)
+  // sem cache ainda, o histórico cai no estado em memória — criar um cache
+  // só com esta visita apagaria os outros dias da unidade na análise e na tela
+  if (!lista) return
   const i = lista.findIndex((p) => p.cod === v.cod || p.data === v.data)
   const ponto = pontoDeVisita(v)
   if (i >= 0) lista[i] = ponto
@@ -452,6 +458,12 @@ async function recarregarVisita(cod: number) {
     if (v) {
       const pontos = await consultarPontosUnidade(v.pdr.cnpj)
       mesclarPontos(v.pdr.cnpj, pontos)
+      if (visitasAlteradas.has(cod)) {
+        const local = estado.find((x) => x.cod === cod)
+        if (local) upsertPonto(local)
+        notificarLeitura()
+        return
+      }
       colocarNoCache(v)
     } else {
       visitasAusentes.add(cod)
@@ -558,6 +570,7 @@ function resumoDiffCarga(antes: Carga | undefined, depois: Carga): string {
   if (antes.placa !== depois.placa) partes.push('placa')
   if (antes.acompanhada !== depois.acompanhada) partes.push('acompanhada')
   if (antes.rateio !== depois.rateio) partes.push('rateio')
+  if (antes.fotoUrl !== depois.fotoUrl || antes.fotoPath !== depois.fotoPath) partes.push('foto')
   return partes.length ? `Carga ${depois.id}: ${partes.join(', ')}` : ''
 }
 
@@ -1694,15 +1707,19 @@ function historicoDePontos(
  */
 export function historicoAcumuladoUnidade(cnpj: string, ate: Date): HistoricoAcumulado {
   const cached = pontosPorCnpj.get(cnpj)
-  const pontos = cached
-    ?? estado
-      .filter((v) => v.pdr.cnpj === cnpj)
-      .map((v) => ({
-        data: v.data,
-        origem: v.acumulado.origem,
-        valores: v.acumulado.valores,
-        cargas: v.cargas.length,
-      }))
+  const pontos: PontoUnidade[] = cached
+    ? cached.map((p) => ({ ...p, valores: { ...p.valores } }))
+    : estado.filter((v) => v.pdr.cnpj === cnpj).map(pontoDeVisita)
+  // visita aberta (e qualquer outra já no estado) ganha do cache: o analista
+  // acabou de gravar o acumulado e a regra 2.5 tem que ver esse número, não o
+  // 0-0-0-0 que ainda está no Postgres
+  for (const v of estado) {
+    if (v.pdr.cnpj !== cnpj) continue
+    const ponto = pontoDeVisita(v)
+    const i = pontos.findIndex((p) => p.cod === v.cod || p.data === v.data)
+    if (i >= 0) pontos[i] = ponto
+    else pontos.push(ponto)
+  }
   return historicoDePontos(pontos, ate)
 }
 
@@ -2039,9 +2056,27 @@ const PARAMETROS_INICIAIS: ParametrosRegras = {
   caixaFitaMax: CAIXA_FITA_MAX,
   mensagemErroChat: '⚠️ {quantidade} erro(s) encontrado(s) na visita:',
   regrasAtivas: regrasAtivasPadrao(),
+  visaoProvedor: 'desligado',
+  visaoChave: '',
+  visaoModelo: '',
+  visaoEndpoint: '',
+  visaoPrompt: '',
 }
 
-let parametros: ParametrosRegras = persistido?.parametros ?? PARAMETROS_INICIAIS
+function completarParametros(p: Partial<ParametrosRegras> | null | undefined): ParametrosRegras {
+  return {
+    ...PARAMETROS_INICIAIS,
+    ...p,
+    regrasAtivas: { ...PARAMETROS_INICIAIS.regrasAtivas, ...p?.regrasAtivas },
+    visaoProvedor: p?.visaoProvedor ?? 'desligado',
+    visaoChave: p?.visaoChave ?? '',
+    visaoModelo: p?.visaoModelo ?? '',
+    visaoEndpoint: p?.visaoEndpoint ?? '',
+    visaoPrompt: p?.visaoPrompt ?? '',
+  }
+}
+
+let parametros: ParametrosRegras = completarParametros(persistido?.parametros)
 const ouvintesParametros = new Set<() => void>()
 
 function notificarParametros() {
@@ -2064,7 +2099,7 @@ export function obterParametros(): ParametrosRegras {
 }
 
 export function salvarParametros(novo: ParametrosRegras) {
-  parametros = novo
+  parametros = completarParametros(novo)
   notificarParametros()
 }
 
@@ -2079,7 +2114,7 @@ export async function hidratarDoBanco(): Promise<void> {
     visitasAusentes.clear()
     visitasPedidas.clear()
     if (dados.pdrs.length) pdrsCatalogo = normalizarCatalogo(dados.pdrs)
-    if (dados.parametros) parametros = dados.parametros
+    if (dados.parametros) parametros = completarParametros(dados.parametros)
     if (dados.usuarios.length) {
       usuarios = dados.usuarios
     } else {

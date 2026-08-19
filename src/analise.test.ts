@@ -294,6 +294,36 @@ describe('2.5 — acumulado não pode diminuir', () => {
     expect(alerta.detalhe).not.toContain('Positiva caiu')
     expect(alerta.valor).toBe('Negativa')
   })
+
+  it('com soPeriodo ignora queda antiga da unidade', () => {
+    expect(
+      conferirSerieAcumulado(
+        [
+          dia('03/06/2026', { negativa: 200 }),
+          dia('02/06/2026', { negativa: 90 }),
+          dia('01/06/2026', { negativa: 100 }),
+        ],
+        'Dia',
+        3,
+        '03/06/2026',
+      ).map((a) => a.codigo),
+    ).not.toContain('2.5')
+  })
+
+  it('com soPeriodo ainda acusa se o dia da visita é que caiu', () => {
+    expect(
+      conferirSerieAcumulado(
+        [
+          dia('03/06/2026', { negativa: 80 }),
+          dia('02/06/2026', { negativa: 90 }),
+          dia('01/06/2026', { negativa: 100 }),
+        ],
+        'Dia',
+        3,
+        '03/06/2026',
+      ).map((a) => a.codigo),
+    ).toContain('2.5')
+  })
 })
 
 describe('Dia Anterior não tem regra de crescimento', () => {
@@ -545,6 +575,21 @@ describe('1.2 / 2.1 — recebimento só conta carga acompanhada', () => {
     expect(c).not.toContain('2.1')
     expect(c).not.toContain('2.7')
   })
+
+  it('não acusa 2.1 nem 2.7 quando o PDR informou e os kg foram preenchidos', () => {
+    const c = codigos(
+      visitaCom([carga({ acompanhada: true })], {
+        dadosVisita: { ...BASE.dadosVisita, recebimentoCargas: 'Sim' },
+        acumulado: {
+          ...BASE.acumulado,
+          informadoPeloPdr: 'Sim',
+          valores: { Negativa: 8_000_000, Declarada: 8_000_000, Positiva: 8_000_000, Participante: 8_000_000 },
+        },
+      }),
+    )
+    expect(c).not.toContain('2.1')
+    expect(c).not.toContain('2.7')
+  })
 })
 
 /**
@@ -555,6 +600,6 @@ describe('1.2 / 2.1 — recebimento só conta carga acompanhada', () => {
 describe('base completa', () => {
   it('mantém o total de alertas da safra', () => {
     const total = VISITAS_INICIAIS.reduce((s, v) => s + analisarVisita(v).length, 0)
-    expect(total).toBe(5041)
+    expect(total).toBe(4803)
   })
 })

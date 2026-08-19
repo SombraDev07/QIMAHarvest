@@ -75,6 +75,8 @@ export interface Carga {
   acompanhada: boolean
   /** evidência fotográfica da carga (placa/romaneio), quando enviada pelo tablet */
   fotoUrl?: string
+  /** caminho no bucket `evidencias` — o que o banco grava; fotoUrl é a URL de exibição */
+  fotoPath?: string
   /** tecnologia (trait) da semente foi testada em laboratório */
   tecnologiaTestada?: boolean
   /** campos que o analista marcou como não informados — trava o input e, nos pesos, vale 0 */
@@ -531,4 +533,17 @@ export interface ParametrosRegras {
   mensagemErroChat: string
   /** liga/desliga cada regra do catálogo (chave = código, ex. "3.4.7") — ausente/true = ativa */
   regrasAtivas: Record<string, boolean>
+  /**
+   * Análise de Fotos — modelo de visão. `desligado` cai no .env
+   * (VITE_VISION_*). A chave não vai para o git; fica no banco ou no .env.local.
+   */
+  visaoProvedor: VisaoProvedor
+  visaoChave: string
+  visaoModelo: string
+  /** URL POST do conector próprio (provedor webhook) */
+  visaoEndpoint: string
+  /** vazio = usa o prompt padrão do código */
+  visaoPrompt: string
 }
+
+export type VisaoProvedor = 'desligado' | 'gemini' | 'openai' | 'webhook'

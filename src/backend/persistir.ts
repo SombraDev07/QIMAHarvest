@@ -16,6 +16,8 @@ import type {
   Visita,
 } from '../types'
 import { dataBrParaIso, dataIsoParaBr, horaPg } from '../format'
+import { visaoProvedorDe } from '../fotos/visao'
+import { assinarFotosCarga, fotoDeBanco, fotoUrlParaBanco } from './evidencias'
 import { supabase } from './cliente'
 
 type LinhaVisita = Record<string, unknown>
@@ -102,7 +104,7 @@ export function cargaParaLinha(visitaCod: number, c: Carga): LinhaCarga {
     grupo_rateio: c.grupoRateio ?? null,
     observacao: c.observacao ?? null,
     acompanhada: c.acompanhada,
-    foto_url: c.fotoUrl ?? null,
+    foto_url: fotoUrlParaBanco(c),
     tecnologia_testada: c.tecnologiaTestada ?? null,
     nao_informado: c.naoInformado ?? {},
   }
@@ -168,7 +170,7 @@ export function cargaDeLinha(row: LinhaCarga): Carga {
     grupoRateio: (row.grupo_rateio as string | null) ?? undefined,
     observacao: (row.observacao as string | null) ?? undefined,
     acompanhada: row.acompanhada !== false,
-    fotoUrl: (row.foto_url as string | null) ?? undefined,
+    ...fotoDeBanco((row.foto_url as string | null) ?? undefined),
     tecnologiaTestada: (row.tecnologia_testada as boolean | null) ?? undefined,
     naoInformado: (row.nao_informado as Carga['naoInformado']) ?? undefined,
   }
@@ -443,6 +445,11 @@ export async function persistirParametros(p: ParametrosRegras): Promise<void> {
     caixa_fita_max: p.caixaFitaMax,
     mensagem_erro_chat: p.mensagemErroChat,
     regras_ativas: p.regrasAtivas,
+    visao_provedor: p.visaoProvedor,
+    visao_chave: p.visaoChave,
+    visao_modelo: p.visaoModelo,
+    visao_endpoint: p.visaoEndpoint,
+    visao_prompt: p.visaoPrompt,
   })
   if (error) throw erro('parametros', error)
 }
@@ -589,6 +596,11 @@ export async function carregarTudo(): Promise<{
         caixaFitaMax: Number(pr.caixa_fita_max),
         mensagemErroChat: String(pr.mensagem_erro_chat),
         regrasAtivas: (pr.regras_ativas as ParametrosRegras['regrasAtivas']) ?? {},
+        visaoProvedor: visaoProvedorDe(pr.visao_provedor),
+        visaoChave: String(pr.visao_chave ?? ''),
+        visaoModelo: String(pr.visao_modelo ?? ''),
+        visaoEndpoint: String(pr.visao_endpoint ?? ''),
+        visaoPrompt: String(pr.visao_prompt ?? ''),
       }
     : null
 
@@ -649,6 +661,11 @@ function parametrosDeLinha(pr: LinhaVisita | null): ParametrosRegras | null {
     caixaFitaMax: Number(pr.caixa_fita_max),
     mensagemErroChat: String(pr.mensagem_erro_chat),
     regrasAtivas: (pr.regras_ativas as ParametrosRegras['regrasAtivas']) ?? {},
+    visaoProvedor: visaoProvedorDe(pr.visao_provedor),
+    visaoChave: String(pr.visao_chave ?? ''),
+    visaoModelo: String(pr.visao_modelo ?? ''),
+    visaoEndpoint: String(pr.visao_endpoint ?? ''),
+    visaoPrompt: String(pr.visao_prompt ?? ''),
   }
 }
 
@@ -802,6 +819,9 @@ async function extrasPorCods(
       cargaId: (o.carga_id as string | null) ?? undefined,
     })
     ocorPor.set(Number(o.visita_cod), lista)
+  }
+  for (const [cod, lista] of cargasPor) {
+    cargasPor.set(cod, await assinarFotosCarga(lista))
   }
   return { cargasPor, diasPor, msgsPor, logsPor, errosPor, ocorPor }
 }

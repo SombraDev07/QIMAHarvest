@@ -496,6 +496,7 @@ export default function TabelaCargas({
       {editando && (
         <EditarCarga
           carga={editando}
+          visitaCod={visita.cod}
           grupos={todosGrupos}
           novoGrupoId={proximoGrupo}
           onSalvar={salvar}

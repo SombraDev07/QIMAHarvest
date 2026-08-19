@@ -213,6 +213,87 @@ export default function Parametros() {
 
         <Panel
           numero="3"
+          titulo={t('API de visão — Análise de Fotos')}
+          hint={t('Lê jpeg/png de romaneio e NF. Sem isso, só o mock SVG é conferido sozinho.')}
+        >
+          <div className="panel__body">
+            <div className="form-grid">
+              <div className="field">
+                <label htmlFor="par-visao-prov">{t('Provedor')}</label>
+                <select
+                  id="par-visao-prov"
+                  value={form.visaoProvedor}
+                  onChange={(e) => set('visaoProvedor', e.target.value as ParametrosRegras['visaoProvedor'])}
+                >
+                  <option value="desligado">{t('Desligado (usar .env se houver)')}</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="webhook">{t('Webhook próprio')}</option>
+                </select>
+                <span className="field__hint">
+                  {t(
+                    'OpenAI no navegador costuma bloquear CORS. Gemini costuma funcionar. Webhook é um POST seu (Edge Function) que devolve o JSON.',
+                  )}
+                </span>
+              </div>
+              <div className="field">
+                <label htmlFor="par-visao-modelo">{t('Modelo')}</label>
+                <input
+                  id="par-visao-modelo"
+                  value={form.visaoModelo}
+                  onChange={(e) => set('visaoModelo', e.target.value)}
+                  placeholder="gemini-2.0-flash / gpt-4o-mini"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="par-visao-chave">{t('Chave da API')}</label>
+                <input
+                  id="par-visao-chave"
+                  type="password"
+                  autoComplete="off"
+                  value={form.visaoChave}
+                  onChange={(e) => set('visaoChave', e.target.value)}
+                  placeholder={t('vazio = VITE_VISION_API_KEY')}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="par-visao-endpoint">{t('URL do webhook')}</label>
+                <input
+                  id="par-visao-endpoint"
+                  value={form.visaoEndpoint}
+                  onChange={(e) => set('visaoEndpoint', e.target.value)}
+                  placeholder="https://…/functions/v1/visao"
+                  disabled={form.visaoProvedor !== 'webhook' && form.visaoProvedor !== 'desligado'}
+                />
+              </div>
+            </div>
+            <div className="field" style={{ marginTop: 16 }}>
+              <label htmlFor="par-visao-prompt">{t('Prompt')}</label>
+              <textarea
+                id="par-visao-prompt"
+                value={form.visaoPrompt}
+                onChange={(e) => set('visaoPrompt', e.target.value)}
+                placeholder={t('Vazio usa o prompt padrão (várias NFs, romaneio com nome variável).')}
+                style={{ minHeight: 140, fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12.5 }}
+              />
+              <span className="field__hint">
+                {t(
+                  'Ajuste se o papel da safra mudar (DANFE, ticket de balança, bloco com várias vias). Deixe vazio para o texto padrão do sistema.',
+                )}{' '}
+                <button
+                  className="btn btn--ghost btn--sm"
+                  type="button"
+                  onClick={() => set('visaoPrompt', '')}
+                >
+                  {t('Restaurar padrão')}
+                </button>
+              </span>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel
+          numero="4"
           titulo={t('Regras ativas')}
           hint={`${Object.values(form.regrasAtivas).filter((v) => v !== false).length}/${CATALOGO_REGRAS.length} ${t('ligadas')}`}
         >

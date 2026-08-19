@@ -43,6 +43,44 @@ export const EN: Record<string, string> = {
   'Foto real: a leitura automática fica disponível quando houver API de visão configurada.':
     'Real photo: automatic reading is available once a vision API is configured.',
   'Leitura local do mock (sem API).': 'Local mock reading (no API).',
+  'Leitura pela API de visão.': 'Read by the vision API.',
+  'lida(s) pela API': 'read by the API',
+  'falha(s) na API': 'API failure(s)',
+  'Falha na API de visão.': 'Vision API failure.',
+  'Nenhuma API de visão configurada. Vá em Administração → Parâmetros.':
+    'No vision API configured. Go to Administration → Parameters.',
+  'Nenhuma API ligada': 'No API enabled',
+  'Do lado esquerdo, a foto. Do lado direito, o que está lançado no sistema e o que a leitura tirou do papel. Romaneio pode aparecer como NF, ticket ou outro nome — o lançado só precisa estar entre os números do documento.':
+    'Photo on the left. On the right, what is in the system and what the reading took from the paper. The delivery note may show up as an invoice, ticket or another label — the entered number only needs to appear among the numbers on the document.',
+  'Agora.': 'Now.',
+  'Fotos simuladas (SVG) leem no navegador, em lote, sem API.':
+    'Simulated photos (SVG) are read in the browser, in bulk, with no API.',
+  'Produção.': 'Production.',
+  'jpeg/png vão para a API configurada (Gemini, OpenAI ou webhook).':
+    'jpeg/png go to the configured API (Gemini, OpenAI or webhook).',
+  'jpeg/png ficam pendentes até plugar a API em Administração → Parâmetros (ou VITE_VISION_* no .env.local).':
+    'jpeg/png stay pending until a vision API is plugged in under Administration → Parameters (or VITE_VISION_* in .env.local).',
+  'Ler esta foto': 'Read this photo',
+  Campo: 'Field',
+  'No sistema': 'In the system',
+  'API de visão — Análise de Fotos': 'Vision API — Photo Review',
+  'Lê jpeg/png de romaneio e NF. Sem isso, só o mock SVG é conferido sozinho.':
+    'Reads jpeg/png of delivery notes and invoices. Without it, only the SVG mock is checked on its own.',
+  Provedor: 'Provider',
+  'Desligado (usar .env se houver)': 'Off (use .env if set)',
+  'Webhook próprio': 'Custom webhook',
+  'OpenAI no navegador costuma bloquear CORS. Gemini costuma funcionar. Webhook é um POST seu (Edge Function) que devolve o JSON.':
+    'OpenAI in the browser often blocks CORS. Gemini usually works. A webhook is your own POST (Edge Function) that returns the JSON.',
+  Modelo: 'Model',
+  'Chave da API': 'API key',
+  'vazio = VITE_VISION_API_KEY': 'empty = VITE_VISION_API_KEY',
+  'URL do webhook': 'Webhook URL',
+  Prompt: 'Prompt',
+  'Vazio usa o prompt padrão (várias NFs, romaneio com nome variável).':
+    'Empty uses the default prompt (several invoices, delivery note with a variable name).',
+  'Ajuste se o papel da safra mudar (DANFE, ticket de balança, bloco com várias vias). Deixe vazio para o texto padrão do sistema.':
+    'Adjust if the harvest paperwork changes (DANFE, scale ticket, multi-copy pad). Leave empty for the system default.',
+  'Restaurar padrão': 'Restore default',
   'ID da carga': 'Load ID',
   'Romaneio / NF': 'Delivery note / invoice',
   Bate: 'Match',
@@ -166,6 +204,13 @@ export const EN: Record<string, string> = {
   'Mover para acompanhadas': 'Move to monitored',
   'Mover para não acompanhadas': 'Move to unmonitored',
   'Salvar carga': 'Save load',
+  'Foto da evidência': 'Evidence photo',
+  'Anexar foto': 'Attach photo',
+  'Trocar foto': 'Replace photo',
+  'Nenhuma foto anexada': 'No photo attached',
+  'Enviando foto…': 'Uploading photo…',
+  'jpeg, png ou webp · até 10 MB. Vale para a Análise de Fotos.':
+    'jpeg, png or webp · up to 10 MB. Used in Photo Review.',
   'Cargas avulsas': 'Standalone loads',
   'Grupos de rateio': 'Split groups',
   Placa: 'Plate',

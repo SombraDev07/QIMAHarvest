@@ -92,12 +92,14 @@ export function conferirSerieAcumulado(
   lista: AcumuladoPeriodo[],
   rotulo: string,
   maximo = 3,
+  /** se informado, só emite a queda daquele período — a série inteira ainda é percorrida */
+  soPeriodo?: string,
 ): Alerta[] {
   const crono = [...lista].reverse() // do mais antigo para o mais novo
   const achados: Alerta[] = []
   let anterior: AcumuladoPeriodo | undefined
 
-  for (let i = 0; i < crono.length && achados.length < maximo; i++) {
+  for (let i = 0; i < crono.length; i++) {
     const atual = crono[i]
     if (periodoZerado(atual)) continue
     if (!anterior) {
@@ -113,26 +115,29 @@ export function conferirSerieAcumulado(
       continue
     }
 
-    const detalhes =
-      caiu.length > 0
-        ? caiu
-            .map(
-              (t) =>
-                `${ROTULO_TECNOLOGIA[t]} caiu de ${kg(base[t])} para ${kg(atual[t])}`,
-            )
-            .join('; ')
-        : `total caiu de ${kg(totalPeriodo(base))} para ${kg(totalPeriodo(atual))}`
+    const destaVisita = !soPeriodo || atual.periodo === soPeriodo
+    if (destaVisita && achados.length < maximo) {
+      const detalhes =
+        caiu.length > 0
+          ? caiu
+              .map(
+                (t) =>
+                  `${ROTULO_TECNOLOGIA[t]} caiu de ${kg(base[t])} para ${kg(atual[t])}`,
+              )
+              .join('; ')
+          : `total caiu de ${kg(totalPeriodo(base))} para ${kg(totalPeriodo(atual))}`
 
-    achados.push({
-      id: `b3-retrocesso-${rotulo}-${atual.periodo}`,
-      codigo: '2.5',
-      severidade: 'erro',
-      regra: 'Acumulado menor que o do período anterior (2.5)',
-      detalhe: `${rotulo} ${atual.periodo} vs. ${base.periodo}: ${detalhes}. O acumulado pode repetir, mas nunca diminuir.`,
-      aba: 'acumulado',
-      valor: caiu.length ? caiu.map((t) => ROTULO_TECNOLOGIA[t]).join(', ') : 'Total',
-      responsavel: 'operacao',
-    })
+      achados.push({
+        id: `b3-retrocesso-${rotulo}-${atual.periodo}`,
+        codigo: '2.5',
+        severidade: 'erro',
+        regra: 'Acumulado menor que o do período anterior (2.5)',
+        detalhe: `${rotulo} ${atual.periodo} vs. ${base.periodo}: ${detalhes}. O acumulado pode repetir, mas nunca diminuir.`,
+        aba: 'acumulado',
+        valor: caiu.length ? caiu.map((t) => ROTULO_TECNOLOGIA[t]).join(', ') : 'Total',
+        responsavel: 'operacao',
+      })
+    }
     anterior = atual
   }
 
@@ -942,22 +947,32 @@ export function analisarVisita(visita: Visita): Alerta[] {
   /**
    * No dia da visita, a série passa a valer o que a visita informou — é o que
    * a tela mostra, e a regra tem que enxergar o mesmo número que o analista.
+   * Casa pela data, não pelo índice: se o ponto do dia ainda não entrou no
+   * cache, dias[0] seria a véspera e a regra compararia o número errado.
    */
-  const diasComVisita = historico.dias.map((dia, i) =>
-    i === 0
-      ? {
-          ...dia,
-          origem: a.origem,
-          negativa: a.valores.Negativa,
-          declarada: a.valores.Declarada,
-          positiva: a.valores.Positiva,
-          participante: a.valores.Participante,
-        }
-      : dia,
+  const patchVisita = {
+    origem: a.origem,
+    negativa: a.valores.Negativa,
+    declarada: a.valores.Declarada,
+    positiva: a.valores.Positiva,
+    participante: a.valores.Participante,
+  }
+  const diasComVisita = historico.dias.some((dia) => dia.periodo === visita.data)
+    ? historico.dias.map((dia) =>
+        dia.periodo === visita.data ? { ...dia, ...patchVisita } : dia,
+      )
+    : [{ ...patchVisita, periodo: visita.data, cargas: visita.cargas.length, visitas: 1 }, ...historico.dias]
+
+  const [, mes, ano] = visita.data.split('/').map(Number)
+  const rotuloMes = `${['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'][mes - 1]}/${ano}`
+  const mesesComVisita = historico.meses.map((m) =>
+    m.periodo === rotuloMes ? { ...m, ...patchVisita } : m,
   )
 
-  conferirSerieAcumulado(diasComVisita, 'Dia').forEach(add)
-  conferirSerieAcumulado(historico.meses, 'Mês').forEach(add)
+  // só a queda do dia/mês desta visita barra a certificação — queda antiga
+  // da unidade fica no histórico daquele outro registro, não neste
+  conferirSerieAcumulado(diasComVisita, 'Dia', 3, visita.data).forEach(add)
+  conferirSerieAcumulado(mesesComVisita, 'Mês', 3, rotuloMes).forEach(add)
 
   /* ------------------------------------------------------ dia anterior *
    * Lançamento manual do auditor, então as duas regras aqui protegem o

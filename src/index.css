@@ -907,12 +907,52 @@ textarea {
 
 .fotos-prova {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(260px, 1fr);
+  grid-template-columns: minmax(240px, 0.9fr) minmax(320px, 1.2fr);
   gap: 16px;
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
+}
+
+.fotos-prova__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.fotos-cmp {
+  max-height: min(52vh, 480px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.fotos-cmp table.data thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.fotos-cmp__ok td {
+  background: #f3faf7;
+}
+
+.fotos-cmp__div td {
+  background: #fff8f7;
+}
+
+.fotos-cmp__pendente td {
+  background: #fffaf3;
+}
+
+.fotos-cmp__detalhe {
+  margin-top: 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-family: inherit;
 }
 
 .fotos-prova__foto img {
@@ -1422,6 +1462,19 @@ textarea {
 
 .table-scroll {
   overflow-x: auto;
+}
+
+.table-scroll--historico {
+  max-height: min(52vh, 480px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.table-scroll--historico table.data thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 table.data {
@@ -3858,6 +3911,46 @@ tr.is-marcada:hover > td {
 
 .form-grid .span-2 {
   grid-column: span 2;
+}
+
+.carga-foto {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.carga-foto img {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: #1f2c38;
+}
+
+.carga-foto__vazia {
+  min-height: 88px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  background: var(--surface-2);
+}
+
+.carga-foto__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .carga-foto {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 620px) {

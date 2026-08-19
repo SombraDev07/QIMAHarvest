@@ -11,6 +11,7 @@ import {
   type GrupoRateio,
 } from '../types'
 import { proximoIdCarga } from '../data/mock'
+import { enviarFotoCarga, validarFotoCarga } from '../backend/evidencias'
 import {
   fmtKg,
   fmtNum,
@@ -46,12 +47,14 @@ export function criarCargaVazia(data: string): Carga {
 
 export default function EditarCarga({
   carga,
+  visitaCod,
   grupos,
   novoGrupoId,
   onSalvar,
   onClose,
 }: {
   carga: Carga
+  visitaCod: number
   grupos: GrupoRateio[]
   novoGrupoId: string
   onSalvar: (c: Carga) => void
@@ -59,6 +62,9 @@ export default function EditarCarga({
 }) {
   const [form, setForm] = useState<Carga>(carga)
   const [grupoSel, setGrupoSel] = useState<string>(carga.grupoRateio ?? NOVO_GRUPO)
+  const [arquivo, setArquivo] = useState<File | null>(null)
+  const [enviando, setEnviando] = useState(false)
+  const [erroFoto, setErroFoto] = useState<string | null>(null)
 
   const set = <K extends keyof Carga>(campo: K, valor: Carga[K]) =>
     setForm((f) => ({ ...f, [campo]: valor }))
@@ -123,6 +129,10 @@ export default function EditarCarga({
 
   function salvar() {
     if (erros.length) return
+    void gravar()
+  }
+
+  async function gravar() {
     let final: Carga = { ...form }
 
     if (form.rateio) {
@@ -142,7 +152,41 @@ export default function EditarCarga({
       final = { ...final, grupoRateio: undefined }
     }
 
+    if (arquivo) {
+      setEnviando(true)
+      setErroFoto(null)
+      try {
+        const enviada = await enviarFotoCarga(visitaCod, final.id, arquivo)
+        final = { ...final, ...enviada }
+      } catch (e) {
+        setErroFoto(e instanceof Error ? e.message : 'Não deu para anexar a foto.')
+        setEnviando(false)
+        return
+      }
+      setEnviando(false)
+    }
+
     onSalvar(final)
+  }
+
+  function escolherFoto(file: File | undefined) {
+    if (!file) return
+    const problema = validarFotoCarga(file)
+    if (problema) {
+      setErroFoto(problema)
+      return
+    }
+    setErroFoto(null)
+    if (form.fotoUrl?.startsWith('blob:')) URL.revokeObjectURL(form.fotoUrl)
+    setArquivo(file)
+    set('fotoUrl', URL.createObjectURL(file))
+  }
+
+  function removerFoto() {
+    if (form.fotoUrl?.startsWith('blob:')) URL.revokeObjectURL(form.fotoUrl)
+    setArquivo(null)
+    setErroFoto(null)
+    setForm((f) => ({ ...f, fotoUrl: undefined, fotoPath: undefined }))
   }
 
   return (
@@ -162,9 +206,9 @@ export default function EditarCarga({
             className="btn btn--primary"
             type="button"
             onClick={salvar}
-            disabled={erros.length > 0}
+            disabled={erros.length > 0 || enviando}
           >
-            Salvar carga
+            {enviando ? 'Enviando foto…' : 'Salvar carga'}
           </button>
         </>
       }
@@ -334,6 +378,38 @@ export default function EditarCarga({
             </select>
           </div>
         )}
+        <div className="field span-2">
+          <label htmlFor="c-foto">Foto da evidência</label>
+          <div className="carga-foto">
+            {form.fotoUrl ? (
+              <img src={form.fotoUrl} alt={`Evidência da carga ${form.id}`} />
+            ) : (
+              <div className="carga-foto__vazia">Nenhuma foto anexada</div>
+            )}
+            <div className="carga-foto__acoes">
+              <label className="btn btn--ghost btn--sm">
+                {form.fotoUrl ? 'Trocar foto' : 'Anexar foto'}
+                <input
+                  id="c-foto"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  hidden
+                  onChange={(e) => {
+                    escolherFoto(e.target.files?.[0])
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+              {form.fotoUrl && (
+                <button className="btn btn--ghost btn--sm" type="button" onClick={removerFoto}>
+                  Remover
+                </button>
+              )}
+              <span className="field__hint">jpeg, png ou webp · até 10 MB. Vale para a Análise de Fotos.</span>
+              {erroFoto && <span className="err-msg">{erroFoto}</span>}
+            </div>
+          </div>
+        </div>
         <div className="field span-2">
           <label htmlFor="c-obs">Observação</label>
           <textarea

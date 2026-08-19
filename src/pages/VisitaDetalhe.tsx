@@ -928,7 +928,7 @@ function AbaAcumulado({
   // a série termina na data da visita: a primeira linha é o dia auditado
   const historico = useMemo(
     () => historicoAcumuladoUnidade(visita.pdr.cnpj, dataParaDate(visita.data)),
-    [visita.pdr.cnpj, visita.data],
+    [visita.pdr.cnpj, visita.data, visita.acumulado],
   )
   const periodos = historico[granularidade]
 
@@ -949,7 +949,14 @@ function AbaAcumulado({
             className="btn btn--primary btn--sm"
             type="button"
             disabled={!podeEditar || !podeDigitar}
-            onClick={() => onAviso('Acumulado gravado.')}
+            onClick={() => {
+              const total = CLASSIFICACOES.reduce((s, c) => s + a.valores[c], 0)
+              onAviso(
+                total === 0
+                  ? 'PDR informado como Sim, mas os kg estão zerados. Preencha o acumulado antes de validar — senão as regras 2.1 e 2.7 continuam.'
+                  : 'Acumulado gravado.',
+              )
+            }}
           >
             Gravar acumulado
           </button>
@@ -982,7 +989,7 @@ function AbaAcumulado({
             hint={
               travado
                 ? `Origem ${a.origem}: o acumulado já vem consolidado e a digitação fica bloqueada.`
-                : 'Marcando Sim, os campos de acumulado ficam liberados para inserção.'
+                : 'Marcando Sim, preencha os kg abaixo. Só marcar Sim com 0-0-0-0 continua erro na validação (2.1 / 2.7).'
             }
             controle={
               <SimNaoInput
@@ -1143,7 +1150,7 @@ function AbaDiaAnterior({
           </span>
         </div>
 
-        <div className="table-scroll">
+        <div className="table-scroll table-scroll--historico">
           <table className="data">
             <thead>
               <tr>
@@ -1296,7 +1303,7 @@ function TabelaAcumulado({
   }
 
   return (
-    <div className="table-scroll">
+    <div className="table-scroll table-scroll--historico">
       <table className="data">
         <thead>
           <tr>

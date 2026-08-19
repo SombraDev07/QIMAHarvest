@@ -268,13 +268,16 @@ function gerarCarga(dataBase: Date, acompanhada: boolean, grupo?: GrupoBase): Ca
   const romaneio = rnd() > 0.975 ? '' : String(int(140000, 159999))
   // a maioria das cargas chega com evidência fotográfica do tablet
   const temFoto = rnd() > 0.08
+  const data = grupo?.data ?? formatarData(dataBase)
+  const horaFinal = grupo?.hora ?? hora
+  const produtor = pick(PRODUTORES)
 
   return {
     id,
-    data: grupo?.data ?? formatarData(dataBase),
-    hora: grupo?.hora ?? hora,
+    data,
+    hora: horaFinal,
     placa,
-    produtor: pick(PRODUTORES),
+    produtor,
     cpfCnpjProdutor: rnd() > 0.5 ? gerarCpf() : gerarCnpj(),
     romaneio,
     pesoLiquido: liquido,
@@ -283,7 +286,15 @@ function gerarCarga(dataBase: Date, acompanhada: boolean, grupo?: GrupoBase): Ca
     rateio: Boolean(grupo),
     grupoRateio: grupo?.id,
     observacao: rnd() > 0.85 ? 'Motorista não apresentou a 2ª via do romaneio.' : undefined,
-    fotoUrl: temFoto ? gerarFotoMock(id, placa, romaneio) : undefined,
+    fotoUrl: temFoto
+      ? gerarFotoMock(id, placa, romaneio, {
+          data,
+          hora: horaFinal,
+          produtor,
+          pesoLiquido: liquido,
+          pesoComDesconto: comDesconto,
+        })
+      : undefined,
     acompanhada,
   }
 }

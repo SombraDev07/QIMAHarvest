@@ -4,13 +4,17 @@ import { useT } from '../i18n'
 import { Breadcrumb, PageHead, Panel, Toast } from '../components/ui'
 import { IconFotos, IconInfo } from '../components/icons'
 import { useFilaFotos } from '../painel'
+import { useParametros } from '../store'
 import {
+  conferirCargaComFoto,
+  lerEvidenciaAsync,
   lerFilaEmMassa,
   type ItemFilaFoto,
   type ResumoLeituraMassa,
   type StatusConferencia,
 } from '../fotos/evidencia'
-import { fmtKg, fmtNum } from '../format'
+import { configVisaoDe, visaoLigada } from '../fotos/visao'
+import { fmtNum } from '../format'
 
 const FILTROS: { id: 'todas' | StatusConferencia; label: string }[] = [
   { id: 'todas', label: 'Todas' },
@@ -27,42 +31,81 @@ function rotuloStatus(s: StatusConferencia) {
   return 'Sem foto'
 }
 
+function chave(i: ItemFilaFoto) {
+  return `${i.visitaCod}-${i.carga.id}`
+}
+
 export default function AnaliseFotos() {
   const t = useT()
-  const fila = useFilaFotos()
+  const parametros = useParametros()
+  const cfg = configVisaoDe(parametros)
+  const ligada = visaoLigada(cfg)
+  const filaRemota = useFilaFotos()
+  const [overlay, setOverlay] = useState<ItemFilaFoto[] | null>(null)
+  const fila = overlay ?? filaRemota
   const [filtro, setFiltro] = useState<(typeof FILTROS)[number]['id']>('todas')
   const [selecionada, setSelecionada] = useState<string | null>(null)
   const [andamento, setAndamento] = useState<{ feitos: number; total: number } | null>(null)
   const [resumo, setResumo] = useState<ResumoLeituraMassa | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
+  const [lendoUma, setLendoUma] = useState(false)
 
   const visivel = useMemo(
     () => (filtro === 'todas' ? fila : fila.filter((i) => i.conferencia.status === filtro)),
     [fila, filtro],
   )
 
-  const chave = (i: ItemFilaFoto) => `${i.visitaCod}-${i.carga.id}`
   const atual = visivel.find((i) => chave(i) === selecionada) ?? visivel[0]
   const nFoto = fila.filter((i) => i.carga.fotoUrl).length
   const lendo = Boolean(andamento)
 
+  function aplicarFila(proxima: ItemFilaFoto[]) {
+    setOverlay(proxima)
+  }
+
   async function lerEmMassa() {
     if (lendo || nFoto === 0) return
     setAndamento({ feitos: 0, total: nFoto })
-    const r = await lerFilaEmMassa(fila, (feitos, total) => setAndamento({ feitos, total }))
+    const r = await lerFilaEmMassa(fila, (feitos, total) => setAndamento({ feitos, total }), cfg)
     setAndamento(null)
-    setResumo(r)
-    if (r.divergente > 0) {
+    aplicarFila(r.fila)
+    setResumo(r.resumo)
+    if (r.resumo.divergente > 0) {
       setFiltro('divergente')
       setSelecionada(null)
     }
     const partes = [
-      `${fmtNum(r.lidasLocal)} ${t('lida(s) no navegador')}`,
-      `${fmtNum(r.divergente)} ${t('divergente(s)')}`,
+      `${fmtNum(r.resumo.lidasLocal)} ${t('lida(s) no navegador')}`,
+      `${fmtNum(r.resumo.lidasApi)} ${t('lida(s) pela API')}`,
+      `${fmtNum(r.resumo.divergente)} ${t('divergente(s)')}`,
     ]
-    if (r.pendenteApi > 0) partes.push(`${fmtNum(r.pendenteApi)} ${t('aguardando API de visão')}`)
+    if (r.resumo.pendenteApi > 0) partes.push(`${fmtNum(r.resumo.pendenteApi)} ${t('aguardando API de visão')}`)
+    if (r.resumo.falhas > 0) partes.push(`${fmtNum(r.resumo.falhas)} ${t('falha(s) na API')}`)
     setAviso(`${t('Leitura em massa')}: ${partes.join(' · ')}`)
   }
+
+  async function lerUma(item: ItemFilaFoto) {
+    if (lendoUma || !item.carga.fotoUrl) return
+    setLendoUma(true)
+    try {
+      const lida = await lerEvidenciaAsync(item.carga.fotoUrl, cfg)
+      const conferencia = conferirCargaComFoto(item.carga, lida)
+      aplicarFila(fila.map((i) => (chave(i) === chave(item) ? { ...i, conferencia } : i)))
+      if (lida.fonte === 'visao-erro') setAviso(lida.erro ?? t('Falha na API de visão.'))
+      else if (lida.fonte === 'requer-visao') {
+        setAviso(t('Nenhuma API de visão configurada. Vá em Administração → Parâmetros.'))
+      }
+    } finally {
+      setLendoUma(false)
+    }
+  }
+
+  const rotuloApi =
+    !ligada
+      ? t('Nenhuma API ligada')
+      : cfg.provedor === 'webhook'
+        ? `Webhook · ${cfg.endpoint}`
+        : `${cfg.provedor === 'gemini' ? 'Gemini' : 'OpenAI'} · ${cfg.modelo}`
 
   return (
     <main className="page">
@@ -86,22 +129,25 @@ export default function AnaliseFotos() {
         }
       />
 
-      <Panel numero="1" titulo={t('Como validar')} hint={t('A foto é a evidência de campo')}>
+      <Panel numero="1" titulo={t('Como validar')} hint={rotuloApi}>
         <div className="panel__body fotos-metodo">
           <p>
-            Uma leitura puxa da foto o ID, a placa e <strong>todas as NFs do papel</strong>. O
-            romaneio lançado só precisa aparecer nessa lista. O botão{' '}
-            <strong>{t('Ler em massa')}</strong> percorre a fila inteira das certificadas — não é
-            uma carga por vez.
+            {t(
+              'Do lado esquerdo, a foto. Do lado direito, o que está lançado no sistema e o que a leitura tirou do papel. Romaneio pode aparecer como NF, ticket ou outro nome — o lançado só precisa estar entre os números do documento.',
+            )}
           </p>
           <ul>
             <li>
-              <strong>Agora.</strong> Fotos simuladas (SVG) leem no navegador, em lote, sem API.
+              <strong>{t('Agora.')}</strong>{' '}
+              {t('Fotos simuladas (SVG) leem no navegador, em lote, sem API.')}
             </li>
             <li>
-              <strong>Produção.</strong> jpeg/png vão em paralelo para um modelo de visão (Gemini
-              ou GPT-4o), com limite de concorrência. Safra inteira pode ir no Batch API, fora do
-              horário. OCR puro não aguenta galpão nem várias vias no mesmo papel.
+              <strong>{t('Produção.')}</strong>{' '}
+              {ligada
+                ? t('jpeg/png vão para a API configurada (Gemini, OpenAI ou webhook).')
+                : t(
+                    'jpeg/png ficam pendentes até plugar a API em Administração → Parâmetros (ou VITE_VISION_* no .env.local).',
+                  )}
             </li>
           </ul>
         </div>
@@ -126,13 +172,25 @@ export default function AnaliseFotos() {
         <div className="alert alert--info">
           <IconInfo />
           <span>
-            {t('Último lote')}: {fmtNum(resumo.lidasLocal)} {t('lida(s) no navegador')} ·{' '}
-            {fmtNum(resumo.ok)} {t('conferida(s)')} · {fmtNum(resumo.divergente)}{' '}
+            {t('Último lote')}: {fmtNum(resumo.lidasLocal)} {t('lida(s) no navegador')}
+            {resumo.lidasApi > 0 && (
+              <>
+                {' '}
+                · {fmtNum(resumo.lidasApi)} {t('lida(s) pela API')}
+              </>
+            )}{' '}
+            · {fmtNum(resumo.ok)} {t('conferida(s)')} · {fmtNum(resumo.divergente)}{' '}
             {t('divergente(s)')}
             {resumo.pendenteApi > 0 && (
               <>
                 {' '}
                 · {fmtNum(resumo.pendenteApi)} {t('aguardando API de visão')}
+              </>
+            )}
+            {resumo.falhas > 0 && (
+              <>
+                {' '}
+                · {fmtNum(resumo.falhas)} {t('falha(s) na API')}
               </>
             )}
             {resumo.semFoto > 0 && (
@@ -194,7 +252,14 @@ export default function AnaliseFotos() {
             })}
           </aside>
 
-          {atual && <PainelProva item={atual} />}
+          {atual && (
+            <PainelProva
+              item={atual}
+              lendo={lendoUma}
+              podeLerApi={Boolean(atual.carga.fotoUrl)}
+              onLer={() => void lerUma(atual)}
+            />
+          )}
         </div>
       )}
 
@@ -203,7 +268,17 @@ export default function AnaliseFotos() {
   )
 }
 
-function PainelProva({ item }: { item: ItemFilaFoto }) {
+function PainelProva({
+  item,
+  lendo,
+  podeLerApi,
+  onLer,
+}: {
+  item: ItemFilaFoto
+  lendo: boolean
+  podeLerApi: boolean
+  onLer: () => void
+}) {
   const t = useT()
   const { carga, conferencia } = item
   return (
@@ -224,9 +299,19 @@ function PainelProva({ item }: { item: ItemFilaFoto }) {
             )}
           </p>
         )}
+        {conferencia.fonte === 'visao-erro' && conferencia.erro && (
+          <p className="field__hint" style={{ marginTop: 10 }}>
+            {conferencia.erro}
+          </p>
+        )}
         {conferencia.fonte === 'svg-mock' && (
           <p className="field__hint" style={{ marginTop: 10 }}>
             {t('Leitura local do mock (sem API).')}
+          </p>
+        )}
+        {conferencia.fonte === 'visao' && (
+          <p className="field__hint" style={{ marginTop: 10 }}>
+            {t('Leitura pela API de visão.')}
           </p>
         )}
       </div>
@@ -239,59 +324,55 @@ function PainelProva({ item }: { item: ItemFilaFoto }) {
               {t(rotuloStatus(conferencia.status))}
             </span>
           </h3>
-          <Link className="btn btn--ghost btn--sm" to={`/visita/${item.visitaCod}`}>
-            {t('Abrir visita')} {item.visitaCod} →
-          </Link>
+          <div className="fotos-prova__acoes">
+            {podeLerApi && (
+              <button className="btn btn--ghost btn--sm" type="button" disabled={lendo} onClick={onLer}>
+                {lendo ? t('Lendo…') : t('Ler esta foto')}
+              </button>
+            )}
+            <Link className="btn btn--ghost btn--sm" to={`/visita/${item.visitaCod}`}>
+              {t('Abrir visita')} {item.visitaCod} →
+            </Link>
+          </div>
         </div>
 
-        <dl className="fotos-kv">
-          <div>
-            <dt>{t('PDR')}</dt>
-            <dd>{item.pdrNome}</dd>
+        {conferencia.checagens.length > 0 ? (
+          <div className="table-scroll fotos-cmp">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>{t('Campo')}</th>
+                  <th>{t('No sistema')}</th>
+                  <th>{t('Na foto')}</th>
+                  <th>{t('Conferência')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {conferencia.checagens.map((c) => (
+                  <tr
+                    key={c.campo}
+                    className={
+                      c.ok === true
+                        ? 'fotos-cmp__ok'
+                        : c.ok === false
+                          ? 'fotos-cmp__div'
+                          : 'fotos-cmp__pendente'
+                    }
+                  >
+                    <td className="cell-strong">{t(c.rotulo)}</td>
+                    <td className="mono">{c.lancado}</td>
+                    <td className="mono">{c.naFoto}</td>
+                    <td>
+                      {c.ok === true ? t('Bate') : c.ok === false ? t('Não bate') : t('Pendente')}
+                      <div className="fotos-cmp__detalhe">{c.detalhe}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div>
-            <dt>{t('Placa')}</dt>
-            <dd className="mono">{carga.placa || '—'}</dd>
-          </div>
-          <div>
-            <dt>{t('Romaneio')}</dt>
-            <dd className="mono">{carga.romaneio || '—'}</dd>
-          </div>
-          <div>
-            <dt>{t('Peso líquido')}</dt>
-            <dd>{fmtKg(carga.pesoLiquido)}</dd>
-          </div>
-          <div>
-            <dt>{t('Produtor')}</dt>
-            <dd>{carga.produtor || '—'}</dd>
-          </div>
-        </dl>
-
-        {conferencia.checagens.length > 0 && (
-          <ul className="fotos-checagens">
-            {conferencia.checagens.map((c) => (
-              <li
-                key={c.campo}
-                className={`fotos-checagem fotos-checagem--${c.ok === true ? 'ok' : c.ok === false ? 'div' : 'pendente'}`}
-              >
-                <div className="fotos-checagem__topo">
-                  <strong>{t(c.rotulo)}</strong>
-                  <span>
-                    {c.ok === true ? t('Bate') : c.ok === false ? t('Não bate') : t('Pendente')}
-                  </span>
-                </div>
-                <div className="fotos-checagem__linhas">
-                  <span>
-                    {t('Lançado')}: <span className="mono">{c.lancado}</span>
-                  </span>
-                  <span>
-                    {t('Na foto')}: <span className="mono">{c.naFoto}</span>
-                  </span>
-                </div>
-                <p>{c.detalhe}</p>
-              </li>
-            ))}
-          </ul>
+        ) : (
+          <p className="field__hint">{t('Esta carga não tem evidência fotográfica.')}</p>
         )}
       </div>
     </section>

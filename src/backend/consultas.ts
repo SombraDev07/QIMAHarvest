@@ -1,9 +1,10 @@
-import type { Carga, Classificacao, SituacaoId, Visita } from '../types'
+import type { Classificacao, SituacaoId, Visita } from '../types'
 import { pesoVolumeLiquido } from '../types'
 import { dataIsoParaBr } from '../format'
 import { COLUNAS_CARGA, COLUNAS_VISITA, montarCsvDeObjetos } from '../relatorios/planilhas'
 import { conferirCargaComFoto, type ItemFilaFoto } from '../fotos/evidencia'
 import { supabase } from './cliente'
+import { assinarFotosCarga } from './evidencias'
 import { cargaDeLinha } from './persistir'
 
 export type KpiSafra = {
@@ -414,19 +415,23 @@ export async function listarFilaFotos(limite = 200): Promise<ItemFilaFoto[]> {
     .limit(limite)
   if (e) throw erro('fila de fotos', e)
   const ORDEM: Record<string, number> = { divergente: 0, pendente: 1, 'sem-foto': 2, ok: 3 }
-  return ((data ?? []) as Record<string, unknown>[])
-    .map((row) => {
-      const visita = row.visitas as Record<string, unknown> | Record<string, unknown>[] | null
-      const v = Array.isArray(visita) ? visita[0] : visita
-      const carga: Carga = cargaDeLinha(row)
-      return {
-        visitaCod: n(v?.cod ?? row.visita_cod),
-        visitaData: v?.data ? dataIsoParaBr(String(v.data)) : '',
-        pdrNome: String(v?.pdr_nome ?? ''),
-        carga,
-        conferencia: conferirCargaComFoto(carga),
-      }
-    })
+  const brutas = ((data ?? []) as Record<string, unknown>[]).map((row) => {
+    const visita = row.visitas as Record<string, unknown> | Record<string, unknown>[] | null
+    const v = Array.isArray(visita) ? visita[0] : visita
+    return {
+      visitaCod: n(v?.cod ?? row.visita_cod),
+      visitaData: v?.data ? dataIsoParaBr(String(v.data)) : '',
+      pdrNome: String(v?.pdr_nome ?? ''),
+      carga: cargaDeLinha(row),
+    }
+  })
+  const cargas = await assinarFotosCarga(brutas.map((i) => i.carga))
+  return brutas
+    .map((item, i) => ({
+      ...item,
+      carga: cargas[i],
+      conferencia: conferirCargaComFoto(cargas[i]),
+    }))
     .sort((a, b) => (ORDEM[a.conferencia.status] ?? 9) - (ORDEM[b.conferencia.status] ?? 9))
 }
 

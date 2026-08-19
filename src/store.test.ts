@@ -21,6 +21,7 @@ import {
   salvarDadosVisita,
   marcarAnaliseFinal,
   visitaNaAnaliseFinal,
+  salvarAcumulado,
   salvarDiaAnterior,
   visitaPorCnpjEData,
 } from './store'
@@ -661,6 +662,20 @@ describe('histórico de acumulado sem dias inventados', () => {
     const h = historicoAcumuladoUnidade(v.pdr.cnpj, new Date(2099, 0, 1))
     expect(h.dias.length).toBeGreaterThan(0)
     for (const d of h.dias) expect(reais.has(d.periodo), d.periodo).toBe(true)
+  })
+
+  it('depois de gravar o acumulado, usa os kg novos e não apaga os outros dias', () => {
+    const v = obterVisita(COD)!
+    const diasAntes = historicoAcumuladoUnidade(v.pdr.cnpj, new Date(2099, 0, 1)).dias.length
+    salvarAcumulado(COD, {
+      informadoPeloPdr: 'Sim',
+      valores: { Negativa: 11, Declarada: 22, Positiva: 33, Participante: 44 },
+    })
+    const h = historicoAcumuladoUnidade(v.pdr.cnpj, new Date(2099, 0, 1))
+    const dia = h.dias.find((d) => d.periodo === v.data)
+    expect(dia?.negativa).toBe(11)
+    expect(dia?.declarada).toBe(22)
+    expect(h.dias.length).toBe(diasAntes)
   })
 })
 
