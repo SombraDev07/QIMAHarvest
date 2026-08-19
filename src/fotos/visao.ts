@@ -19,10 +19,12 @@ Extraia só o que estiver visível. Não invente. Se o campo não aparecer, use 
 
 O documento PODE ter várias notas fiscais / vias / códigos. Isso é normal:
 - "notasFiscais": todos os números de NF, DANFE, chave resumida ou ticket visíveis.
-- "romaneio": o número do romaneio / ticket / ordem desta carga. Pode coincidir com uma das NFs, ter outro nome (romaneio, ticket, controle, ordem) ou estar num canto diferente. Não assuma que a maior NF é o romaneio.
+- "romaneio": o número do romaneio / ticket / ordem desta carga (no papel pode aparecer como Romaneio, Ticket, Controle ou Ordem). Pode coincidir com uma das NFs. Não assuma que a maior NF é o romaneio.
 
-Pesos em quilogramas (kg). Aceite 30.000, 30000, 30.000,0 ou 30 t (converta t → kg).
+Pesos em quilogramas (kg). No Brasil, 4.810 kg é quatro mil oitocentos e dez (não 4,81). Aceite 30.000, 30000, 30.000,0 ou 30 t (converta t → kg).
 Data em dd/mm/aaaa. Hora em HH:MM (24h). Placa Mercosul ou antiga, sem hífen.
+
+A foto ESTÁ anexada — leia o papel. Não devolva tudo null se o texto estiver visível.
 
 Responda APENAS um JSON:
 {
@@ -194,21 +196,49 @@ export function parseRespostaVisao(texto: string): CamposVisao {
   }
   if (!bruto || typeof bruto !== 'object') throw new Error('A visão não devolveu um objeto.')
   const o = bruto as Record<string, unknown>
-  const nfs = Array.isArray(o.notasFiscais)
-    ? o.notasFiscais.map((n) => String(n).trim()).filter(Boolean)
+  const nfsBruto = campoVisao(o, 'notasFiscais', 'notas_fiscais', 'nfs', 'tickets')
+  const nfs = Array.isArray(nfsBruto)
+    ? nfsBruto.map((n) => String(n).trim()).filter(Boolean)
     : []
-  const romaneio = textoOpcional(o.romaneio)
+  const romaneio = textoOpcional(campoVisao(o, 'romaneio', 'ticket', 'controle', 'ordem'))
   if (romaneio && !nfs.includes(romaneio)) nfs.unshift(romaneio)
   return {
-    data: dataOpcional(o.data),
-    hora: horaOpcional(o.hora),
-    placa: textoOpcional(o.placa),
-    produtor: textoOpcional(o.produtor),
+    data: dataOpcional(campoVisao(o, 'data')),
+    hora: horaOpcional(campoVisao(o, 'hora')),
+    placa: textoOpcional(campoVisao(o, 'placa')),
+    produtor: textoOpcional(campoVisao(o, 'produtor', 'remetente', 'nomeProdutor')),
     romaneio,
     notasFiscais: nfs,
-    pesoLiquido: numeroKg(o.pesoLiquido),
-    pesoComDesconto: numeroKg(o.pesoComDesconto),
+    pesoLiquido: numeroKg(campoVisao(o, 'pesoLiquido', 'peso_liquido', 'pesoLiquidoKg')),
+    pesoComDesconto: numeroKg(
+      campoVisao(o, 'pesoComDesconto', 'peso_com_desconto', 'pesoDesconto', 'pesoLiquidoDesconto'),
+    ),
   }
+}
+
+function chaveVisao(s: string): string {
+  return s.toLowerCase().replace(/[\s_]/g, '')
+}
+
+function campoVisao(o: Record<string, unknown>, ...nomes: string[]): unknown {
+  const mapa = new Map(Object.entries(o).map(([k, v]) => [chaveVisao(k), v]))
+  for (const n of nomes) {
+    if (mapa.has(chaveVisao(n))) return mapa.get(chaveVisao(n))
+  }
+  return undefined
+}
+
+export function extracaoVisaoVazia(c: CamposVisao): boolean {
+  return (
+    !c.data &&
+    !c.hora &&
+    !c.placa &&
+    !c.produtor &&
+    !c.romaneio &&
+    c.notasFiscais.length === 0 &&
+    c.pesoLiquido == null &&
+    c.pesoComDesconto == null
+  )
 }
 
 function textoOpcional(v: unknown): string | undefined {
@@ -272,13 +302,23 @@ export function leituraVisaoEmCache(fotoUrl: string): CamposVisao | undefined {
   return cache.get(fotoUrl)
 }
 
-export async function lerFotoComVisao(fotoUrl: string, cfg: ConfigVisao): Promise<CamposVisao> {
-  const hit = cache.get(fotoUrl)
-  if (hit) return hit
+export async function lerFotoComVisao(
+  fotoUrl: string,
+  cfg: ConfigVisao,
+  forcar = false,
+): Promise<CamposVisao> {
+  if (!forcar) {
+    const hit = cache.get(fotoUrl)
+    if (hit && !extracaoVisaoVazia(hit)) return hit
+  }
   if (!visaoLigada(cfg)) throw new Error('Nenhuma API de visão configurada.')
   const img = await imagemInline(fotoUrl, cfg.fetchImpl ?? fetch)
   const bruto = await chamarProvedor(img, cfg)
   const campos = parseRespostaVisao(bruto)
+  if (extracaoVisaoVazia(campos)) {
+    cache.delete(fotoUrl)
+    throw new Error('A IA não leu nenhum campo da foto. Rode Validar com IA de novo.')
+  }
   cache.set(fotoUrl, campos)
   return campos
 }
@@ -292,7 +332,7 @@ async function imagemInline(fotoUrl: string, fetchImpl: typeof fetch): Promise<I
   const r = await fetchImpl(fotoUrl)
   if (!r.ok) throw new Error(`Não deu para baixar a foto (${r.status}).`)
   const blob = await r.blob()
-  const mime = blob.type || 'image/jpeg'
+  const mime = blob.type && blob.type.startsWith('image/') ? blob.type : 'image/jpeg'
   const base64 = await blobParaBase64(blob)
   return { mime, base64 }
 }
@@ -317,30 +357,47 @@ async function chamarProvedor(img: ImagemInline, cfg: ConfigVisao): Promise<stri
   return chamarWebhook(img, cfg, fetchImpl)
 }
 
+export function textoDaRespostaGemini(corpo: unknown): string {
+  const partes =
+    (corpo as { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] })
+      .candidates?.[0]?.content?.parts ?? []
+  const visivel = partes
+    .filter((p) => !p.thought && p.text)
+    .map((p) => p.text ?? '')
+    .join('\n')
+    .trim()
+  if (visivel) return visivel
+  return partes
+    .map((p) => p.text ?? '')
+    .join('\n')
+    .trim()
+}
+
 async function chamarGemini(img: ImagemInline, cfg: ConfigVisao, fetchImpl: typeof fetch): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.modelo)}:generateContent?key=${encodeURIComponent(cfg.chave)}`
   const r = await fetchImpl(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.chave },
     body: JSON.stringify({
       contents: [
         {
           role: 'user',
           parts: [
+            { inlineData: { mimeType: img.mime || 'image/jpeg', data: img.base64 } },
             { text: cfg.prompt },
-            { inline_data: { mime_type: img.mime, data: img.base64 } },
           ],
         },
       ],
-      generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: 'application/json',
+        maxOutputTokens: 2048,
+      },
     }),
   })
   const corpo = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(mensagemErroApi('Gemini', r.status, corpo))
-  const texto = (corpo as { candidates?: { content?: { parts?: { text?: string }[] } }[] }).candidates?.[0]
-    ?.content?.parts?.map((p) => p.text ?? '')
-    .join('')
-    .trim()
+  const texto = textoDaRespostaGemini(corpo)
   if (!texto) throw new Error('Gemini não devolveu texto.')
   return texto
 }

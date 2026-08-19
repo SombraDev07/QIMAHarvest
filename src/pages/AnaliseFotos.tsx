@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useT } from '../i18n'
 import { Breadcrumb, PageHead, Panel, Toast } from '../components/ui'
-import { IconFotos, IconInfo, IconRefresh } from '../components/icons'
+import { IconCheck, IconErro, IconFotos, IconInfo, IconRefresh } from '../components/icons'
 import { useFilaFotos } from '../painel'
 import { garantirVisitasNoCache, marcarFotoConferida, useParametros } from '../store'
 import {
@@ -132,7 +132,7 @@ export default function AnaliseFotos() {
     if (lendoUma || !item.carga.fotoUrl) return
     setLendoUma(true)
     try {
-      const lida = await lerEvidenciaAsync(item.carga.fotoUrl, cfg)
+      const lida = await lerEvidenciaAsync(item.carga.fotoUrl, cfg, true)
       const conferencia = conferirCargaComFoto(item.carga, lida)
       gravarLeitura(item, conferencia)
       if (lida.fonte === 'visao-erro') setAviso(lida.erro ?? t('Falha na API de visão.'))
@@ -460,38 +460,29 @@ function PainelProva({
           </p>
         )}
         {conferencia.checagens.length > 0 && conferenciaFoiLida(conferencia) ? (
-          <div className="table-scroll fotos-cmp">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>{t('Campo')}</th>
-                  <th>{t('Na foto')}</th>
-                  <th>{t('Conferência')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {conferencia.checagens.map((c) => (
-                  <tr
-                    key={c.campo}
-                    className={
-                      c.ok === true
-                        ? 'fotos-cmp__ok'
-                        : c.ok === false
-                          ? 'fotos-cmp__div'
-                          : 'fotos-cmp__pendente'
-                    }
-                  >
-                    <td className="cell-strong">{t(c.rotulo)}</td>
-                    <td className="mono">{c.naFoto}</td>
-                    <td>
-                      {c.ok === true ? t('Bate') : c.ok === false ? t('Não bate') : t('Pendente')}
-                      <div className="fotos-cmp__detalhe">{c.detalhe}</div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul className="fotos-ia-lista">
+            {conferencia.checagens.map((c) => (
+              <li
+                key={c.campo}
+                className={
+                  c.ok === true
+                    ? 'fotos-ia-item fotos-ia-item--ok'
+                    : c.ok === false
+                      ? 'fotos-ia-item fotos-ia-item--div'
+                      : 'fotos-ia-item fotos-ia-item--pendente'
+                }
+              >
+                <span className="fotos-ia-item__check" aria-hidden>
+                  {c.ok === true ? <IconCheck size={22} /> : c.ok === false ? <IconErro size={22} /> : '–'}
+                </span>
+                <div className="fotos-ia-item__txt">
+                  <div className="fotos-ia-item__rotulo">{t(c.rotulo)}</div>
+                  <div className="fotos-ia-item__valor mono">{c.naFoto}</div>
+                  <div className="fotos-ia-item__detalhe">{c.detalhe}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
         ) : conferencia.checagens.length > 0 ? (
           <p className="field__hint">
             {t('Rode a IA para ver o que a foto contém e se os dados batem com o lançado.')}

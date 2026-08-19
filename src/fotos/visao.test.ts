@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   configVisaoDe,
+  extracaoVisaoVazia,
   listarModelosGemini,
   MODELO_GEMINI,
   MODELOS_GEMINI,
   numeroKg,
   parseRespostaVisao,
+  textoDaRespostaGemini,
   visaoLigada,
   visaoProvedorDe,
   visaoProvedorOuPadrao,
@@ -54,6 +56,21 @@ describe('parseRespostaVisao', () => {
     expect(a.hora).toBe('09:05')
     expect(a.pesoLiquido).toBe(30000)
     expect(a.pesoComDesconto).toBe(29500)
+  })
+
+  it('aceita chave em snake_case e ticket no lugar de romaneio', () => {
+    const a = parseRespostaVisao(
+      JSON.stringify({
+        placa: 'ICK7081',
+        ticket: '36404',
+        peso_liquido: '4.810',
+        produtor: 'AMARILDO SCHNEIDER',
+      }),
+    )
+    expect(a.placa).toBe('ICK7081')
+    expect(a.romaneio).toBe('36404')
+    expect(a.pesoLiquido).toBe(4810)
+    expect(a.produtor).toBe('AMARILDO SCHNEIDER')
   })
 })
 
@@ -132,5 +149,25 @@ describe('listarModelosGemini', () => {
       ),
     )
     expect(lista).toEqual([{ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' }])
+  })
+})
+
+describe('textoDaRespostaGemini / extracaoVisaoVazia', () => {
+  it('ignora parte de pensamento e lê o JSON', () => {
+    const texto = textoDaRespostaGemini({
+      candidates: [
+        {
+          content: {
+            parts: [{ thought: true, text: 'vou ler' }, { text: '{"placa":"ICK7081"}' }],
+          },
+        },
+      ],
+    })
+    expect(texto).toBe('{"placa":"ICK7081"}')
+  })
+
+  it('marca extração vazia', () => {
+    expect(extracaoVisaoVazia({ notasFiscais: [] })).toBe(true)
+    expect(extracaoVisaoVazia({ notasFiscais: [], placa: 'ICK7081' })).toBe(false)
   })
 })

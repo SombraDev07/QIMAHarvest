@@ -74,6 +74,8 @@ export const EN: Record<string, string> = {
   'lida(s) pela API': 'read by the API',
   'falha(s) na API': 'API failure(s)',
   'Falha na API de visão.': 'Vision API failure.',
+  'A IA não leu nenhum campo da foto. Rode Validar com IA de novo.':
+    'The AI did not read any field from the photo. Run Validate with AI again.',
   'Nenhuma API de visão configurada. Vá em Administração → Parâmetros.':
     'No vision API configured. Go to Administration → Parameters.',
   'Nenhuma API ligada': 'No API enabled',

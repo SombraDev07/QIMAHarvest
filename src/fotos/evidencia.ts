@@ -190,12 +190,13 @@ export function lerEvidencia(fotoUrl: string | undefined): EvidenciaLida {
 export async function lerEvidenciaAsync(
   fotoUrl: string | undefined,
   cfg: ConfigVisao,
+  forcar = false,
 ): Promise<EvidenciaLida> {
   const sinc = lerEvidencia(fotoUrl)
   if (sinc.fonte !== 'requer-visao' || !fotoUrl) return sinc
   if (!visaoLigada(cfg)) return sinc
   try {
-    const campos = await lerFotoComVisao(fotoUrl, cfg)
+    const campos = await lerFotoComVisao(fotoUrl, cfg, forcar)
     return { ...campos, fonte: 'visao' }
   } catch (e) {
     return {
@@ -559,7 +560,7 @@ export async function lerFilaEmMassa(
   if (cfg && visaoLigada(cfg) && reais.length) {
     let feitos = mocks.length
     await comConcorrencia(reais, CONCORRENCIA_API, async (item) => {
-      const lida = await lerEvidenciaAsync(item.carga.fotoUrl, cfg)
+      const lida = await lerEvidenciaAsync(item.carga.fotoUrl, cfg, true)
       item.conferencia = conferirCargaComFoto(item.carga, lida)
       feitos += 1
       onProgress(feitos, total)
