@@ -21,6 +21,7 @@ const ImportarVisitas = lazy(() => import('./pages/ImportarVisitas'))
 const CorrigirVisitas = lazy(() => import('./pages/CorrigirVisitas'))
 const Relatorios = lazy(() => import('./pages/Relatorios'))
 const AnaliseFotos = lazy(() => import('./pages/AnaliseFotos'))
+const AnaliseFinal = lazy(() => import('./pages/AnaliseFinal'))
 const Solicitacoes = lazy(() => import('./pages/Solicitacoes'))
 const VisitaDetalhe = lazy(() => import('./pages/VisitaDetalhe'))
 const Visitas = lazy(() => import('./pages/Visitas'))
@@ -76,6 +77,7 @@ export default function App() {
           />
           <Route path="/relatorios" element={<Relatorios />} />
           <Route path="/analise-fotos" element={<AnaliseFotos />} />
+          <Route path="/analise-final" element={<AnaliseFinal />} />
           <Route path="/solicitacoes" element={<Solicitacoes />} />
           <Route path="/importar-visitas" element={<ImportarVisitas />} />
           <Route path="*" element={<Navigate to="/visitas" replace />} />

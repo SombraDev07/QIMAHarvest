@@ -4,6 +4,7 @@ import {
   IconAdmin,
   IconAlerta,
   IconFotos,
+  IconLista,
   IconRelatorios,
   IconRotas,
   IconSolicitacao,
@@ -25,6 +26,7 @@ const ABAS = [
   { to: '/ocorrencias', label: 'Ocorrências', Icone: IconAlerta },
   { to: '/relatorios', label: 'Relatórios', Icone: IconRelatorios },
   { to: '/analise-fotos', label: 'Análise de Fotos', Icone: IconFotos },
+  { to: '/analise-final', label: 'Análise Final', Icone: IconLista },
   { to: '/solicitacoes', label: 'Solicitações', Icone: IconSolicitacao },
   { to: '/importar-visitas', label: 'Importar planilha', Icone: IconUpload },
 ]

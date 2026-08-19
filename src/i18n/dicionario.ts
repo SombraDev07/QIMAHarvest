@@ -15,6 +15,14 @@ export const EN: Record<string, string> = {
   Ocorrências: 'Incidents',
   Relatórios: 'Reports',
   'Análise de Fotos': 'Photo Review',
+  'Análise Final': 'Final Review',
+  'Garimpo das visitas já certificadas que ainda têm erro ou atenção — a certificação não muda':
+    'Review of certified visits that still have an error or warning — certification does not change',
+  'Nenhuma visita neste recorte.': 'No visits in this slice.',
+  Pendentes: 'Pending',
+  'Já conferidas': 'Already reviewed',
+  'Conferido — os pontos estão corretos': 'Checked — the points are correct',
+  'Marcar análise final': 'Mark final review',
   'Conferência das evidências fotográficas das cargas em visitas certificadas':
     'Review of photographic evidence for loads on certified visits',
   'Como validar': 'How to validate',
@@ -52,6 +60,8 @@ export const EN: Record<string, string> = {
   'conferida(s)': 'matched',
   'Leitura em massa': 'Bulk reading',
   Solicitações: 'Requests',
+  'O arquivo fica no histórico da solicitação (até 20 MB).':
+    'The file is kept in the request history (up to 20 MB).',
   'Importar planilha': 'Import spreadsheet',
   Início: 'Home',
   'Todas as visitas': 'All visits',
@@ -366,6 +376,8 @@ export const EN: Record<string, string> = {
   'Mesma carga inserida como acompanhada e não acompanhada':
     'Same load entered as both monitored and unmonitored',
   'Romaneio duplicado com carga acompanhada': 'Delivery note duplicated with a monitored load',
+  'Carga não acompanhada dentro do horário da visita':
+    'Unmonitored load within the visit time window',
 
   'Ocorrência sinalizada (2.5) sem registro na aba 6':
     'Incident flagged (2.5) with no record on tab 6',
@@ -404,8 +416,8 @@ export const EN: Record<string, string> = {
     'Plates shorter than that are treated as incomplete typing.',
   'Saltos maiores que isso entre romaneios da mesma visita geram erro.':
     'Gaps larger than that between delivery notes of the same visit raise an error.',
-  'Cargas até {n} min antes do início ou depois do fim da visita não geram o aviso 3.1.1.':
-    'Loads up to {n} min before the start or after the end of the visit do not raise alert 3.1.1.',
+  'Cargas até {n} min antes do início ou depois do fim da visita não geram o erro 3.1.1.':
+    'Loads up to {n} min before the start or after the end of the visit do not raise error 3.1.1.',
   'Lançamento de Dia Anterior com qualquer tecnologia acima disso vira erro (2.9).':
     'A Previous Day entry with any technology above that becomes an error (2.9).',
   'Faixa usada na pergunta 2.6 (Dados da Visita) e na regra de análise.':

@@ -78,6 +78,9 @@ export function visitaParaLinha(v: Visita): LinhaVisita {
     ultima_validacao_ts: v.ultimaValidacao ? new Date(v.ultimaValidacao.ts).toISOString() : null,
     ultima_validacao_erros: v.ultimaValidacao?.erros ?? null,
     ultima_validacao_atencoes: v.ultimaValidacao?.atencoes ?? null,
+    analise_final_por: v.analiseFinal?.por ?? null,
+    analise_final_ts: v.analiseFinal ? new Date(v.analiseFinal.ts).toISOString() : null,
+    analise_final_obs: v.analiseFinal?.obs ?? null,
     aviso_import: v.avisoImport ?? null,
   }
 }
@@ -222,6 +225,14 @@ export function montarVisita(
     mensagens: extras.mensagens,
     errosLiberados: extras.errosLiberados,
     ultimaValidacao: uv,
+    analiseFinal:
+      row.analise_final_ts
+        ? {
+            por: String(row.analise_final_por ?? ''),
+            ts: new Date(String(row.analise_final_ts)).getTime(),
+            obs: String(row.analise_final_obs ?? ''),
+          }
+        : undefined,
     motivo: (row.motivo as string | null) ?? undefined,
     avisoImport: (row.aviso_import as Visita['avisoImport']) ?? undefined,
     logAlteracoes: extras.logAlteracoes,

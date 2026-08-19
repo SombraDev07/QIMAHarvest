@@ -426,6 +426,7 @@ function NovaSolicitacaoModal({
           e.target.value = ''
         }}
       />
+      <span className="field__hint">O arquivo fica no histórico da solicitação (até 20 MB).</span>
       {anexos.length > 0 && (
         <div className="sol-anexos-pendentes" style={{ marginTop: 8 }}>
           {anexos.map((a) => (

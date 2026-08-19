@@ -18,6 +18,9 @@ import {
   migrarCargas,
   obterVisita,
   salvarCarga,
+  salvarDadosVisita,
+  marcarAnaliseFinal,
+  visitaNaAnaliseFinal,
   salvarDiaAnterior,
   visitaPorCnpjEData,
 } from './store'
@@ -658,5 +661,24 @@ describe('histórico de acumulado sem dias inventados', () => {
     const h = historicoAcumuladoUnidade(v.pdr.cnpj, new Date(2099, 0, 1))
     expect(h.dias.length).toBeGreaterThan(0)
     for (const d of h.dias) expect(reais.has(d.periodo), d.periodo).toBe(true)
+  })
+})
+
+describe('1.4 gera ocorrência e análise final não descertifica', () => {
+  it('cria ocorrência de fitas e marca 2.5 como Sim', () => {
+    salvarDadosVisita(COD, { fitasAssociaveisCargas: 'Não' })
+    const v = obterVisita(COD)!
+    expect(v.dadosVisita.houveOcorrencia).toBe('Sim')
+    expect(v.ocorrencias.some((o) => o.id === `OC-FITAS-${COD}`)).toBe(true)
+  })
+
+  it('análise final marca conferência e a visita segue certificada', () => {
+    certificarVisita(COD, [], { erros: 2, atencoes: 1 })
+    expect(obterVisita(COD)!.situacao).toBe('certificada')
+    expect(visitaNaAnaliseFinal(obterVisita(COD)!)).toBe(true)
+    marcarAnaliseFinal(COD, 'conferi as justificativas')
+    const v = obterVisita(COD)!
+    expect(v.situacao).toBe('certificada')
+    expect(v.analiseFinal?.obs).toBe('conferi as justificativas')
   })
 })

@@ -50,6 +50,7 @@ describe('cobertura do dicionário', () => {
       'Ocorrências',
       'Relatórios',
       'Análise de Fotos',
+      'Análise Final',
       'Solicitações',
       'Importar planilha',
     ]

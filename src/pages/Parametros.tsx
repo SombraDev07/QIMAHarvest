@@ -130,7 +130,7 @@ export default function Parametros() {
                   onChange={(e) => set('toleranciaHorarioMin', Number(e.target.value))}
                 />
                 <span className="field__hint">
-                  {t('Cargas até {n} min antes do início ou depois do fim da visita não geram o aviso 3.1.1.').replace('{n}', String(form.toleranciaHorarioMin))}
+                  {t('Cargas até {n} min antes do início ou depois do fim da visita não geram o erro 3.1.1.').replace('{n}', String(form.toleranciaHorarioMin))}
                 </span>
               </div>
 

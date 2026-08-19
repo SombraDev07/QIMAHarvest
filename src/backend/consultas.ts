@@ -430,6 +430,46 @@ export async function listarFilaFotos(limite = 200): Promise<ItemFilaFoto[]> {
     .sort((a, b) => (ORDEM[a.conferencia.status] ?? 9) - (ORDEM[b.conferencia.status] ?? 9))
 }
 
+export type ItemAnaliseFinal = {
+  cod: number
+  data: string
+  pdrNome: string
+  consultor: string
+  erros: number
+  atencoes: number
+  conferida: boolean
+  conferidaPor: string
+  conferidaEm: number | null
+  obs: string
+}
+
+export async function listarFilaAnaliseFinal(limite = 300): Promise<ItemAnaliseFinal[]> {
+  const sb = supabase()
+  if (!sb) return []
+  const { data, error: e } = await sb
+    .from('visitas')
+    .select(
+      'cod, data, pdr_nome, consultor, ultima_validacao_erros, ultima_validacao_atencoes, analise_final_por, analise_final_ts, analise_final_obs',
+    )
+    .eq('situacao', 'certificada')
+    .or('ultima_validacao_erros.gt.0,ultima_validacao_atencoes.gt.0,analise_final_ts.not.is.null')
+    .order('data', { ascending: false })
+    .limit(limite)
+  if (e) throw erro('fila análise final', e)
+  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+    cod: n(r.cod),
+    data: r.data ? dataIsoParaBr(String(r.data)) : '',
+    pdrNome: String(r.pdr_nome ?? ''),
+    consultor: String(r.consultor ?? ''),
+    erros: n(r.ultima_validacao_erros),
+    atencoes: n(r.ultima_validacao_atencoes),
+    conferida: Boolean(r.analise_final_ts),
+    conferidaPor: String(r.analise_final_por ?? ''),
+    conferidaEm: r.analise_final_ts ? new Date(String(r.analise_final_ts)).getTime() : null,
+    obs: String(r.analise_final_obs ?? ''),
+  }))
+}
+
 export async function listarAcumuladoAuto(termo = '', limite = 80): Promise<VisitaAcumuladoResumo[]> {
   const sb = supabase()
   if (!sb) return []

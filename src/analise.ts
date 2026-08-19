@@ -189,8 +189,8 @@ export function analisarVisita(visita: Visita): Alerta[] {
   visita.cargas.forEach((c) => {
     const p = percentualDesconto(c)
 
-    // 3.1.1 — horário dentro da janela da visita, com a tolerância configurada em
-    // Parâmetros para os dois lados (sem dado de auditor itinerante, tratado como aviso)
+    // 3.1.1 — horário fora da janela da visita (com tolerância). 5.2 — não
+    // acompanhada que caiu dentro da janela: o auditor deveria ter visto.
     const horaCarga = emMinutos(c.hora)
     const foraDaJanela =
       horaCarga < emMinutos(visita.horaInicio) - TOLERANCIA_HORARIO_MIN ||
@@ -199,9 +199,19 @@ export function analisarVisita(visita: Visita): Alerta[] {
       add({
         id: `${c.id}-fora-horario`,
         codigo: '3.1.1',
-        severidade: 'atencao',
+        severidade: 'erro',
         regra: 'Carga fora do horário de atuação (3.1.1)',
         detalhe: `Carga ${c.id} lançada às ${c.hora}, fora da janela ${visita.horaInicio}–${visita.horaFim} da visita (tolerância de ${TOLERANCIA_HORARIO_MIN} min).`,
+        aba: abaCarga,
+        cargaId: c.id,
+      })
+    } else if (!c.acompanhada) {
+      add({
+        id: `${c.id}-nao-acompanhada-na-janela`,
+        codigo: '5.2',
+        severidade: 'erro',
+        regra: 'Carga não acompanhada dentro do horário da visita (5.2)',
+        detalhe: `Carga ${c.id} às ${c.hora} caiu na janela ${visita.horaInicio}–${visita.horaFim} e não foi acompanhada pelo auditor.`,
         aba: abaCarga,
         cargaId: c.id,
       })
@@ -353,8 +363,8 @@ export function analisarVisita(visita: Visita): Alerta[] {
         // 3.6.1 — letras/prefixo fora do padrão numérico
         add({
           id: `${c.id}-romaneio-fora-padrao`,
-          codigo: '3.6.1',
-          severidade: 'atencao',
+        codigo: '3.6.1',
+        severidade: 'erro',
           regra: 'Romaneio fora do padrão (3.6.1)',
           detalhe: `Carga ${c.id}: romaneio "${c.romaneio}" tem letras ou prefixo diferente do padrão numérico da unidade.`,
           aba: abaCarga,
@@ -420,7 +430,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
       add({
         id: `${c.id}-tecnologia-nao-testada`,
         codigo: '3.7.1',
-        severidade: 'atencao',
+        severidade: 'erro',
         regra: 'Tecnologia marcada como não testada (3.7.1)',
         detalhe: `Carga ${c.id} (placa ${c.placa}) está com a tecnologia da semente sem teste de laboratório.`,
         aba: abaCarga,
@@ -502,8 +512,8 @@ export function analisarVisita(visita: Visita): Alerta[] {
   }
 
   /* ================================================================ *
-   * 5. Cargas Não Acompanhadas — validações extras (5.1 e 5.3;
-   * 5.2 já está coberta por 3.1.1 aplicada a todas as cargas acima)
+   * 5. Cargas Não Acompanhadas — 5.1 e 5.3 aqui; 5.2 (não acompanhada
+   * dentro da janela) e 3.1.1 (fora da janela) rodam no laço das cargas.
    * ================================================================ */
   const acompanhadas = visita.cargas.filter((c) => c.acompanhada)
   const naoAcompanhadas = visita.cargas.filter((c) => !c.acompanhada)
@@ -571,7 +581,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
       add({
         id: `${g.id}-unico`,
         codigo: '4.11',
-        severidade: 'atencao',
+        severidade: 'erro',
         regra: 'Rateio com uma única carga',
         detalhe: `O grupo ${g.id} ficou com apenas uma carga.`,
         aba: 'divergencias',
@@ -654,7 +664,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
       add({
         id: `${g.id}-tecnologia-participante`,
         codigo: '4.7',
-        severidade: 'atencao',
+        severidade: 'erro',
         regra: 'Rateio com tecnologia do participante (4.7)',
         detalhe: `O grupo ${g.id} tem carga classificada como Participante — confirme a tecnologia antes de certificar.`,
         aba: 'divergencias',
@@ -742,7 +752,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
     add({
       id: 'b2-caixa-zero',
       codigo: '1.3',
-      severidade: 'atencao',
+      severidade: 'erro',
       regra: 'Testes realizados sem resultado informado (1.3)',
       detalhe: 'Foram realizados testes (2.3) mas a caixa de fita teste (2.6) está zerada.',
       aba: 'visita',
@@ -755,7 +765,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
     add({
       id: 'r1-4-fitas-nao-associaveis',
       codigo: '1.4',
-      severidade: 'atencao',
+      severidade: 'erro',
       regra: 'Fitas testadas não associáveis às cargas (1.4)',
       detalhe: 'O PDR não guarda as fitas testadas de forma que seja possível associá-las às cargas.',
       aba: 'visita',
@@ -780,7 +790,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
     add({
       id: 'b2-ocorrencia-sem-registro',
       codigo: '6.1',
-      severidade: 'atencao',
+      severidade: 'erro',
       regra: 'Ocorrência sem registro',
       detalhe: 'A pergunta 2.5 está "Sim" mas não há ocorrência cadastrada na aba 6.',
       aba: 'ocorrencias',
@@ -878,7 +888,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
     add({
       id: 'r2-3-acumulado-baixo',
       codigo: '2.3',
-      severidade: 'atencao',
+      severidade: 'erro',
       regra: 'Acumulado inferior a 100 kg (2.3)',
       detalhe: `O acumulado total informado é de apenas ${kg(totalAcumulado)}.`,
       aba: 'acumulado',
@@ -920,7 +930,7 @@ export function analisarVisita(visita: Visita): Alerta[] {
       add({
         id: 'r2-6-acumulado-duplicado',
         codigo: '2.6',
-        severidade: 'atencao',
+        severidade: 'erro',
         regra: 'Acumulado duplicado (2.6)',
         detalhe: `O total informado é idêntico ao da véspera (${vespera.periodo}) — confira se não foi copiado.`,
         aba: 'acumulado',

@@ -45,6 +45,7 @@ import {
   type LogAlteracao,
   CLASSIFICACOES,
   SENHA_MIN,
+  TIPO_OCORRENCIA_FITAS,
   podeDefinirCredenciais,
   podeEditarVisita,
 } from './types'
@@ -70,6 +71,11 @@ import {
   persistirVisitas,
   type PontoUnidade,
 } from './backend/persistir'
+import {
+  apagarSolicitacao as apagarSolicitacaoRemota,
+  carregarSolicitacoes,
+  persistirSolicitacao,
+} from './backend/solicitacoes'
 
 /* ------------------------------------------------------------------ *
  * Store em memória. Substituir estas funções por chamadas HTTP quando
@@ -556,7 +562,30 @@ function resumoDiffCarga(antes: Carga | undefined, depois: Carga): string {
 }
 
 export function salvarDadosVisita(cod: number, patch: Partial<DadosVisita>) {
-  alterarVisita(cod, (v) => ({ ...v, dadosVisita: { ...v.dadosVisita, ...patch } }))
+  alterarVisita(cod, (v) => sincronizarOcorrenciaFitas({ ...v, dadosVisita: { ...v.dadosVisita, ...patch } }))
+}
+
+function sincronizarOcorrenciaFitas(v: Visita): Visita {
+  if (v.dadosVisita.fitasAssociaveisCargas !== 'Não') return v
+  if (v.ocorrencias.some((o) => o.tipo === TIPO_OCORRENCIA_FITAS || o.id === `OC-FITAS-${v.cod}`)) {
+    return { ...v, dadosVisita: { ...v.dadosVisita, houveOcorrencia: 'Sim' } }
+  }
+  return {
+    ...v,
+    dadosVisita: { ...v.dadosVisita, houveOcorrencia: 'Sim' },
+    ocorrencias: [
+      ...v.ocorrencias,
+      {
+        id: `OC-FITAS-${v.cod}`,
+        tipo: TIPO_OCORRENCIA_FITAS,
+        gravidade: 'Média',
+        descricao:
+          'O PDR não guarda as fitas testadas de forma associável às cargas (regra 1.4).',
+        data: v.data,
+        status: 'Aberta',
+      },
+    ],
+  }
 }
 
 export function salvarAcumulado(cod: number, patch: Partial<Acumulado>) {
@@ -952,7 +981,10 @@ function registrarSistema(v: Visita, texto: string): Visita {
 export function registrarValidacao(cod: number, erros: number, atencoes: number) {
   alterarVisita(cod, (v) =>
     registrarSistema(
-      { ...v, ultimaValidacao: { por: obterUsuarioLogado().nome, ts: Date.now(), erros, atencoes } },
+      {
+        ...sincronizarOcorrenciaFitas(v),
+        ultimaValidacao: { por: obterUsuarioLogado().nome, ts: Date.now(), erros, atencoes },
+      },
       erros === 0 && atencoes === 0
         ? 'Validação executada: nenhuma inconsistência encontrada.'
         : `Validação executada: ${erros} erro(s) e ${atencoes} ponto(s) de atenção. Detalhes na aba Análise.`,
@@ -985,19 +1017,50 @@ export function devolverParaCentral(cod: number) {
   )
 }
 
-export function certificarVisita(cod: number, liberacoes: Omit<ErroLiberado, 'por' | 'ts'>[]) {
+export function certificarVisita(
+  cod: number,
+  liberacoes: Omit<ErroLiberado, 'por' | 'ts'>[],
+  snapshot: { erros: number; atencoes: number } = { erros: 0, atencoes: 0 },
+) {
   const ts = Date.now()
   const novas: ErroLiberado[] = liberacoes.map((l) => ({ ...l, por: obterUsuarioLogado().nome, ts }))
+  const por = obterUsuarioLogado().nome
 
   alterarVisita(cod, (v) => {
+    const comFitas = sincronizarOcorrenciaFitas(v)
     const texto = novas.length
-      ? `Visita certificada por ${obterUsuarioLogado().nome} com ${novas.length} erro(s) liberado(s) mediante justificativa.`
-      : `Visita certificada por ${obterUsuarioLogado().nome} sem pendências.`
+      ? `Visita certificada por ${por} com ${novas.length} erro(s) liberado(s) mediante justificativa.`
+      : `Visita certificada por ${por} sem pendências.`
     return registrarSistema(
-      { ...v, situacao: 'certificada', errosLiberados: [...v.errosLiberados, ...novas] },
+      {
+        ...comFitas,
+        situacao: 'certificada',
+        errosLiberados: [...comFitas.errosLiberados, ...novas],
+        ultimaValidacao: { por, ts, erros: snapshot.erros, atencoes: snapshot.atencoes },
+      },
       texto,
     )
   })
+}
+
+/** garimpo pós-certificação: a visita continua certificada */
+export function marcarAnaliseFinal(cod: number, obs: string) {
+  const por = obterUsuarioLogado().nome
+  const ts = Date.now()
+  alterarVisita(cod, (v) =>
+    registrarSistema(
+      { ...v, analiseFinal: { por, ts, obs: obs.trim() } },
+      `Análise final conferida por ${por}. A certificação não muda.`,
+    ),
+  )
+}
+
+export function visitaNaAnaliseFinal(v: Visita): boolean {
+  if (v.situacao !== 'certificada') return false
+  if (v.analiseFinal) return true
+  const erros = v.ultimaValidacao?.erros ?? 0
+  const atencoes = v.ultimaValidacao?.atencoes ?? 0
+  return erros + atencoes > 0 || v.errosLiberados.length > 0
 }
 
 /* ------------------------------------------------------------------ *
@@ -1785,21 +1848,64 @@ export function registrarRelatorioImportacao(
  * Solicitações — pedidos de exclusão de carga, inserção de dados e
  * acumulado, tratados em quadro kanban com chat e anexos
  * ------------------------------------------------------------------ */
-let solicitacoes: Solicitacao[] = semAnexosMortos(
-  persistido?.solicitacoes ?? SOLICITACOES_INICIAIS,
-)
+let solicitacoes: Solicitacao[] = bancoAtivo()
+  ? []
+  : semAnexosMortos(persistido?.solicitacoes ?? SOLICITACOES_INICIAIS)
 const ouvintesSolicitacoes = new Set<() => void>()
 let sequenciaSolicitacao = Math.max(0, ...solicitacoes.map((s) => s.numero))
-let sequenciaMensagemSolicitacao = maiorSufixo(
-  solicitacoes.flatMap((s) => s.mensagens.map((m) => m.id)),
-)
-let sequenciaAnexo = maiorSufixo(
-  solicitacoes.flatMap((s) => s.mensagens.flatMap((m) => m.anexos.map((a) => a.id))),
-)
 
 function notificarSolicitacoes() {
   ouvintesSolicitacoes.forEach((fn) => fn())
   agendarGravacao()
+}
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function novoId(): string {
+  return crypto.randomUUID()
+}
+
+let salvandoSolicitacoes = 0
+
+async function salvarSolicitacaoRemota(id: string) {
+  if (!bancoAtivo() || hidratando) return
+  const s = solicitacoes.find((x) => x.id === id)
+  if (!s || !UUID.test(s.id)) return
+  salvandoSolicitacoes += 1
+  ignorarRealtimeAte = Date.now() + 60_000
+  try {
+    const gravada = await persistirSolicitacao(s)
+    const ainda = solicitacoes.find((x) => x.id === id)
+    if (!ainda) return
+    solicitacoes = solicitacoes.map((x) =>
+      x.id === id
+        ? {
+            ...ainda,
+            mensagens: ainda.mensagens.map((m) => {
+              const gm = gravada.mensagens.find((y) => y.id === m.id)
+              if (!gm) return m
+              return {
+                ...m,
+                anexos: m.anexos.map((a) => {
+                  const ga = gm.anexos.find((y) => y.id === a.id)
+                  return ga ? { ...a, path: ga.path, url: ga.url || a.url, arquivo: undefined } : a
+                }),
+              }
+            }),
+          }
+        : x,
+    )
+    ouvintesSolicitacoes.forEach((fn) => fn())
+    registrarFalha(null)
+  } catch (e) {
+    registrarFalha(
+      e instanceof Error ? `Anexo/solicitação: ${e.message}` : 'Falha ao gravar a solicitação.',
+    )
+  } finally {
+    salvandoSolicitacoes = Math.max(0, salvandoSolicitacoes - 1)
+    ignorarRealtimeAte = Date.now() + 2500
+  }
 }
 
 export function useSolicitacoes(): Solicitacao[] {
@@ -1813,12 +1919,20 @@ export function useSolicitacoes(): Solicitacao[] {
 function alterarSolicitacao(id: string, fn: (s: Solicitacao) => Solicitacao) {
   solicitacoes = solicitacoes.map((s) => (s.id === id ? fn(s) : s))
   notificarSolicitacoes()
+  void salvarSolicitacaoRemota(id)
 }
 
 /** remove definitivamente a solicitação — quem pode chamar isso é decidido na tela */
 export function excluirSolicitacao(id: string) {
   solicitacoes = solicitacoes.filter((s) => s.id !== id)
   notificarSolicitacoes()
+  if (!bancoAtivo() || hidratando || !UUID.test(id)) return
+  ignorarRealtimeAte = Date.now() + 2500
+  void apagarSolicitacaoRemota(id).catch((e) => {
+    registrarFalha(
+      e instanceof Error ? `Excluir solicitação: ${e.message}` : 'Falha ao excluir a solicitação.',
+    )
+  })
 }
 
 /** cria uma nova solicitação — descrição e anexos iniciais já entram como a 1ª mensagem do chat */
@@ -1836,7 +1950,7 @@ export function criarSolicitacao(dados: {
   const numero = ++sequenciaSolicitacao
   const anexos = dados.anexos ?? []
   const nova: Solicitacao = {
-    id: `SOL-${numero}`,
+    id: novoId(),
     numero,
     tipo: dados.tipo,
     titulo: dados.titulo,
@@ -1853,7 +1967,7 @@ export function criarSolicitacao(dados: {
       dados.descricao || anexos.length > 0
         ? [
             {
-              id: `MSG-SOL-${++sequenciaMensagemSolicitacao}`,
+              id: novoId(),
               autor: dados.solicitante,
               texto: dados.descricao,
               ts: agora,
@@ -1864,6 +1978,7 @@ export function criarSolicitacao(dados: {
   }
   solicitacoes = [nova, ...solicitacoes]
   notificarSolicitacoes()
+  void salvarSolicitacaoRemota(nova.id)
   return nova
 }
 
@@ -1872,14 +1987,15 @@ export function moverSolicitacao(id: string, status: StatusSolicitacao) {
   alterarSolicitacao(id, (s) => ({ ...s, status, atualizadoEm: Date.now() }))
 }
 
-/** registra um arquivo anexado ao chat — guarda só metadados + object URL local */
+/** registra um arquivo anexado ao chat — o File sobe para o bucket `anexos` */
 export function criarAnexo(file: File): AnexoArquivo {
   return {
-    id: `ANEXO-${++sequenciaAnexo}`,
+    id: novoId(),
     nome: file.name,
     tamanho: file.size,
     tipo: file.type || 'application/octet-stream',
     url: URL.createObjectURL(file),
+    arquivo: file,
   }
 }
 
@@ -1895,7 +2011,7 @@ export function enviarMensagemSolicitacao(
     atualizadoEm: agora,
     mensagens: [
       ...s.mensagens,
-      { id: `MSG-SOL-${++sequenciaMensagemSolicitacao}`, autor, texto, ts: agora, anexos },
+      { id: novoId(), autor, texto, ts: agora, anexos },
     ],
   }))
 }
@@ -1981,6 +2097,15 @@ export async function hidratarDoBanco(): Promise<void> {
     visitasAlteradas.clear()
     baseSubstituida = true
     try {
+      const lista = await carregarSolicitacoes()
+      solicitacoes = lista
+      sequenciaSolicitacao = Math.max(0, ...lista.map((s) => s.numero))
+    } catch (e) {
+      registrarFalha(
+        e instanceof Error ? `Solicitações: ${e.message}` : 'Falha ao ler solicitações.',
+      )
+    }
+    try {
       const maior = await maiorCodVisita()
       if (maior >= 900000) contadorFake = maior
     } catch {
@@ -2000,6 +2125,7 @@ export async function hidratarDoBanco(): Promise<void> {
     ouvintesPdr.forEach((fn) => fn())
     ouvintesParametros.forEach((fn) => fn())
     ouvintesUsuarios.forEach((fn) => fn())
+    ouvintesSolicitacoes.forEach((fn) => fn())
   }
 }
 
@@ -2028,6 +2154,22 @@ export function escutarBanco() {
         const row = (payload.new ?? payload.old) as { visita_cod?: number } | null
         const cod = Number(row?.visita_cod)
         if (cod && estado.some((v) => v.cod === cod)) void recarregarVisita(cod)
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'solicitacoes' },
+      () => {
+        if (Date.now() < ignorarRealtimeAte || hidratando || salvandoSolicitacoes > 0) return
+        void carregarSolicitacoes()
+          .then((lista) => {
+            solicitacoes = lista
+            sequenciaSolicitacao = Math.max(sequenciaSolicitacao, ...lista.map((s) => s.numero))
+            ouvintesSolicitacoes.forEach((fn) => fn())
+          })
+          .catch(() => {
+            /* o quadro local continua; o próximo F5 reconcilia */
+          })
       },
     )
     .subscribe()

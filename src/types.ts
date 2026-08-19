@@ -153,6 +153,15 @@ export interface Validacao {
   atencoes: number
 }
 
+/** garimpo depois da certificação — não mexe na situação da visita */
+export interface AnaliseFinal {
+  por: string
+  ts: number
+  obs: string
+}
+
+export const TIPO_OCORRENCIA_FITAS = 'Fitas não associáveis às cargas'
+
 /** import em massa que reabriu a visita na Central */
 export interface AvisoImport {
   por: string
@@ -281,6 +290,8 @@ export interface Visita {
   mensagens: Mensagem[]
   errosLiberados: ErroLiberado[]
   ultimaValidacao?: Validacao
+  /** conferência posterior — a visita continua certificada */
+  analiseFinal?: AnaliseFinal
   motivo?: string
   /**
    * Correção em lote que gerou erro: a análise mostra "(Avisa Import)" na
@@ -457,8 +468,12 @@ export interface AnexoArquivo {
   /** em bytes */
   tamanho: number
   tipo: string
-  /** URL local (object URL) — válida enquanto a aba estiver aberta */
+  /** signed URL do Storage, ou blob: enquanto o envio não termina */
   url: string
+  /** caminho no bucket `anexos` — o histórico permanente */
+  path?: string
+  /** ainda não subiu; some depois do envio e não entra no JSON */
+  arquivo?: File
 }
 
 export interface MensagemSolicitacao {

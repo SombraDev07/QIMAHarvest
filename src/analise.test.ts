@@ -80,6 +80,11 @@ describe('3.1.1 — carga fora do horário da visita', () => {
     )
     expect(alerta?.detalhe).toContain('tolerância de 60 min')
   })
+
+  it('é erro, não só atenção', () => {
+    const alerta = analisarVisita(visitaCom([carga({ hora: '09:13' })])).find((a) => a.codigo === '3.1.1')
+    expect(alerta?.severidade).toBe('erro')
+  })
 })
 
 describe('3.1.2 — data da carga diferente da visita', () => {
@@ -89,6 +94,32 @@ describe('3.1.2 — data da carga diferente da visita', () => {
 
   it('não acusa na mesma data', () => {
     expect(codigos(visitaCom([carga({ data: BASE.data })]))).not.toContain('3.1.2')
+  })
+
+  it('é erro', () => {
+    expect(
+      analisarVisita(visitaCom([carga({ data: '01/01/2020' })])).find((a) => a.codigo === '3.1.2')
+        ?.severidade,
+    ).toBe('erro')
+  })
+})
+
+describe('5.2 — não acompanhada dentro da janela', () => {
+  it('acusa não acompanhada no horário do auditor', () => {
+    const alerta = analisarVisita(
+      visitaCom([carga({ hora: '16:00', acompanhada: false })]),
+    ).find((a) => a.codigo === '5.2')
+    expect(alerta?.severidade).toBe('erro')
+  })
+
+  it('não acusa 5.2 quando está fora da janela — aí vale 3.1.1', () => {
+    const c = codigos(visitaCom([carga({ hora: '09:13', acompanhada: false })]))
+    expect(c).toContain('3.1.1')
+    expect(c).not.toContain('5.2')
+  })
+
+  it('não acusa 5.2 em carga acompanhada dentro da janela', () => {
+    expect(codigos(visitaCom([carga({ hora: '16:00', acompanhada: true })]))).not.toContain('5.2')
   })
 })
 
@@ -394,6 +425,60 @@ describe('2.9 / 2.10 — Dia Anterior', () => {
   })
 })
 
+describe('regras que passaram de atenção para erro', () => {
+  const sev = (codigo: string, v: Visita) =>
+    analisarVisita(v).find((a) => a.codigo === codigo)?.severidade
+
+  it('1.3, 1.4 e 6.1 bloqueiam', () => {
+    const v = visitaCom([], {
+      dadosVisita: {
+        ...BASE.dadosVisita,
+        realizouTestes: 'Sim',
+        caixaFitaTeste: 0,
+        fitasAssociaveisCargas: 'Não',
+        houveOcorrencia: 'Sim',
+      },
+      ocorrencias: [],
+    })
+    expect(sev('1.3', v)).toBe('erro')
+    expect(sev('1.4', v)).toBe('erro')
+    expect(sev('6.1', v)).toBe('erro')
+  })
+
+  it('3.6.1 (romaneio com letra), 3.7.1, 4.7 e 4.11 bloqueiam', () => {
+    expect(sev('3.6.1', visitaCom([carga({ romaneio: 'NF150' })]))).toBe('erro')
+    expect(sev('3.7.1', visitaCom([carga({ tecnologiaTestada: false })]))).toBe('erro')
+    const rateio = visitaCom([
+      carga({ id: '1', rateio: true, grupoRateio: 'G1', classificacao: 'Participante' }),
+      carga({
+        id: '2',
+        rateio: true,
+        grupoRateio: 'G1',
+        classificacao: 'Participante',
+        romaneio: '150002',
+      }),
+    ])
+    expect(sev('4.7', rateio)).toBe('erro')
+    const sozinho = visitaCom([carga({ rateio: true, grupoRateio: 'G-SOZINHO' })])
+    expect(sev('4.11', sozinho)).toBe('erro')
+  })
+
+  it('2.3 acumulado irrisório bloqueia', () => {
+    expect(
+      sev(
+        '2.3',
+        visitaCom([], {
+          acumulado: {
+            ...BASE.acumulado,
+            informadoPeloPdr: 'Sim',
+            valores: { Negativa: 40, Declarada: 0, Positiva: 0, Participante: 0 },
+          },
+        }),
+      ),
+    ).toBe('erro')
+  })
+})
+
 describe('formato do alerta', () => {
   it('todo alerta aponta para onde o analista deve ir', () => {
     for (const a of analisarVisita(visitaCom([carga({ hora: '09:13', romaneio: '' })]))) {
@@ -470,6 +555,6 @@ describe('1.2 / 2.1 — recebimento só conta carga acompanhada', () => {
 describe('base completa', () => {
   it('mantém o total de alertas da safra', () => {
     const total = VISITAS_INICIAIS.reduce((s, v) => s + analisarVisita(v).length, 0)
-    expect(total).toBe(4862)
+    expect(total).toBe(5041)
   })
 })

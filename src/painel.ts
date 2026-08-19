@@ -11,9 +11,11 @@ import {
   listarAcumuladoAuto,
   listarFila,
   listarFilaFotos,
+  listarFilaAnaliseFinal,
   resumoDeVisita,
   type FiltroFila,
   type FluxoQtd,
+  type ItemAnaliseFinal,
   type KpiAcumulado,
   type KpiSafra,
   type ResultadoFila,
@@ -21,7 +23,8 @@ import {
   type VisitaResumo,
 } from './backend/consultas'
 import { filaAnaliseFotos, type ItemFilaFoto } from './fotos/evidencia'
-import { obterUsuarioLogado, usePdrsCatalogo, useVersaoConsultas, useVisitas } from './store'
+import { analisarVisita } from './analise'
+import { obterUsuarioLogado, visitaNaAnaliseFinal, usePdrsCatalogo, useVersaoConsultas, useVisitas } from './store'
 
 export function useKpiSafra(): KpiSafra {
   const locais = useVisitas()
@@ -272,6 +275,52 @@ export function useFilaFotos(): ItemFilaFoto[] {
   }, [versao])
 
   return bancoAtivo() ? remoto : filaAnaliseFotos(locais)
+}
+
+export function filaAnaliseFinalLocal(visitas: ReturnType<typeof useVisitas>): ItemAnaliseFinal[] {
+  return visitas
+    .filter((v) => v.situacao === 'certificada')
+    .map((v) => {
+      const alertas = visitaNaAnaliseFinal(v) ? null : analisarVisita(v)
+      if (!visitaNaAnaliseFinal(v) && !alertas?.length) return null
+      const lista = alertas ?? []
+      return {
+        cod: v.cod,
+        data: v.data,
+        pdrNome: v.pdr.nome,
+        consultor: v.consultor,
+        erros: v.ultimaValidacao?.erros ?? lista.filter((a) => a.severidade === 'erro').length,
+        atencoes: v.ultimaValidacao?.atencoes ?? lista.filter((a) => a.severidade === 'atencao').length,
+        conferida: Boolean(v.analiseFinal),
+        conferidaPor: v.analiseFinal?.por ?? '',
+        conferidaEm: v.analiseFinal?.ts ?? null,
+        obs: v.analiseFinal?.obs ?? '',
+      }
+    })
+    .filter((x): x is ItemAnaliseFinal => x !== null)
+}
+
+export function useFilaAnaliseFinal(): ItemAnaliseFinal[] {
+  const locais = useVisitas()
+  const versao = useVersaoConsultas()
+  const [remoto, setRemoto] = useState<ItemAnaliseFinal[]>([])
+
+  useEffect(() => {
+    if (!bancoAtivo()) return
+    let viva = true
+    void listarFilaAnaliseFinal()
+      .then((r) => {
+        if (viva) setRemoto(r)
+      })
+      .catch(() => {
+        if (viva) setRemoto([])
+      })
+    return () => {
+      viva = false
+    }
+  }, [versao])
+
+  return bancoAtivo() ? remoto : filaAnaliseFinalLocal(locais)
 }
 
 export type { VisitaResumo, FluxoQtd, KpiSafra }

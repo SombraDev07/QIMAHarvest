@@ -70,6 +70,7 @@ export const CATALOGO_REGRAS: DefinicaoRegra[] = [
 
   // 5. Cargas não acompanhadas
   { codigo: '5.1', secao: '5. Cargas não acompanhadas', label: 'Mesma carga inserida como acompanhada e não acompanhada' },
+  { codigo: '5.2', secao: '5. Cargas não acompanhadas', label: 'Carga não acompanhada dentro do horário da visita' },
   { codigo: '5.3', secao: '5. Cargas não acompanhadas', label: 'Romaneio duplicado com carga acompanhada' },
 
   // 6. Ocorrências

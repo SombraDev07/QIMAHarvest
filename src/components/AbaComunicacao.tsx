@@ -49,8 +49,9 @@ export default function AbaComunicacao({
   }
 
   function certificar() {
+    const snap = { erros: erros.length, atencoes: atencoes.length }
     if (erros.length === 0) {
-      certificarVisita(visita.cod, [])
+      certificarVisita(visita.cod, [], snap)
       onAviso('Visita certificada.')
       return
     }
@@ -183,7 +184,7 @@ export default function AbaComunicacao({
           erros={erros}
           onClose={() => setCertificando(false)}
           onConfirmar={(liberacoes) => {
-            certificarVisita(visita.cod, liberacoes)
+            certificarVisita(visita.cod, liberacoes, { erros: erros.length, atencoes: atencoes.length })
             setCertificando(false)
             onAviso(`Visita certificada com ${liberacoes.length} erro(s) liberado(s).`)
           }}
