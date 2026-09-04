@@ -14,7 +14,7 @@ import {
   obterUsuarios,
   removerUsuario,
 } from './store'
-import { USUARIOS_INICIAIS, OCORRENCIAS_CAMPO_INICIAIS } from './data/mock'
+import { USUARIOS_INICIAIS, OCORRENCIAS_CAMPO_INICIAIS, COD_VISITA_BIANCHI, VISITAS_INICIAIS, visitasSementeDasOcorrencias } from './data/mock'
 import {
   PERFIS,
   ehPerfilRtv,
@@ -424,5 +424,12 @@ describe('conta RTV', () => {
     const mista = OCORRENCIAS_CAMPO_INICIAIS.find((o) => o.numero === 8004)!
     expect(mista.mensagens.some((m) => m.papel === 'Líder')).toBe(true)
     expect(mista.mensagens.filter(mensagemVisivelParaRtv).every((m) => /analista|rtv/i.test(m.papel))).toBe(true)
+  })
+
+  it('a ocorrência demo da Bianchi aponta para a visita 295510', () => {
+    const v = VISITAS_INICIAIS.find((x) => x.cod === COD_VISITA_BIANCHI)
+    expect(v?.pdr.nome).toBe('BIANCHI COMÉRCIO DE GRÃOS S/A')
+    expect(OCORRENCIAS_CAMPO_INICIAIS.some((o) => o.visitaCod === COD_VISITA_BIANCHI)).toBe(true)
+    expect(visitasSementeDasOcorrencias().some((x) => x.cod === COD_VISITA_BIANCHI)).toBe(true)
   })
 })

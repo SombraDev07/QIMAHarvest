@@ -5,6 +5,7 @@ import {
   PDRS_CATALOGO_INICIAIS,
   SOLICITACOES_INICIAIS,
   USUARIOS_INICIAIS,
+  visitasSementeDasOcorrencias,
   reservarIdCarga,
 } from './data/mock'
 import { MODELO_GEMINI } from './fotos/visao'
@@ -480,6 +481,11 @@ async function recarregarVisita(cod: number) {
       }
       colocarNoCache(v)
     } else {
+      const semente = visitasSementeDasOcorrencias().find((x) => x.cod === cod)
+      if (semente) {
+        colocarNoCache(semente)
+        return
+      }
       visitasAusentes.add(cod)
       estado = estado.filter((x) => x.cod !== cod)
       notificarLeitura()
@@ -2473,6 +2479,65 @@ export function salvarParametros(novo: ParametrosRegras) {
   notificarParametros()
 }
 
+function mesclarPdrsDasVisitasSemente(): boolean {
+  let mudou = false
+  for (const v of visitasSementeDasOcorrencias()) {
+    const nome = mascaraProdutor(v.pdr.nome)
+    if (pdrsCatalogo.some((p) => p.cnpj === v.pdr.cnpj || mascaraProdutor(p.nome) === nome)) continue
+    pdrsCatalogo = [
+      ...pdrsCatalogo,
+      {
+        id: proximoIdPdr(),
+        nome: v.pdr.nome,
+        cnpj: v.pdr.cnpj,
+        cidade: v.pdr.cidade,
+        uf: v.pdr.uf,
+        situacao: 'Ativo',
+      },
+    ]
+    mudou = true
+  }
+  return mudou
+}
+
+/**
+ * Em produção as visitas vêm do Postgres e o mock some. As ocorrências de
+ * demonstração apontam para CODs da semente (ex.: 295510 Bianchi) — se esses
+ * CODs não existirem no banco, a tela web fica sem a PDR. Sobe o que faltar.
+ */
+async function garantirSementeDasOcorrencias() {
+  const sementes = visitasSementeDasOcorrencias()
+  if (sementes.length === 0) return
+  let noBanco: Visita[] = []
+  try {
+    noBanco = await carregarVisitasPorCods(sementes.map((v) => v.cod))
+  } catch {
+    noBanco = []
+  }
+  const tem = new Set(noBanco.map((v) => v.cod))
+  for (const v of noBanco) colocarNoCache(v)
+  const faltando = sementes.filter((v) => !tem.has(v.cod))
+  for (const v of faltando) {
+    visitasAusentes.delete(v.cod)
+    colocarNoCache(v)
+    visitasAlteradas.add(v.cod)
+  }
+  if (faltando.length) {
+    try {
+      await persistirVisitas(faltando)
+    } catch {
+      // a semente continua na sessão mesmo se o schema recusar a visita
+    }
+  }
+  if (mesclarPdrsDasVisitasSemente()) {
+    try {
+      await persistirPdrs(pdrsCatalogo)
+    } catch {
+      // catálogo segue na sessão
+    }
+  }
+}
+
 /** boot: troca o mock pelo catálogo do Postgres. Visitas entram sob demanda. */
 export async function hidratarDoBanco(): Promise<void> {
   if (!bancoAtivo()) return
@@ -2523,6 +2588,7 @@ export async function hidratarDoBanco(): Promise<void> {
     } catch {
       // catálogo sobe mesmo se a tabela de visitas ainda não existir
     }
+    await garantirSementeDasOcorrencias()
     registrarFalha(null)
     invalidarConsultas()
   } catch (e) {

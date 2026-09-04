@@ -696,7 +696,23 @@ const VISITA_TESTE_MUNICIPIO_PAULISTA: Visita = {
   motivo: 'INSERÇÃO_AUTO — visita criada via importação de acumulado',
 }
 
-export const VISITAS_INICIAIS: Visita[] = [...gerarVisitas(260), VISITA_TESTE_MUNICIPIO_PAULISTA]
+/**
+ * A ocorrência #8009 aponta para este COD. Sem o nome fixo, o gerador
+ * sorteava outra razão social e a versão web (Postgres) nascia sem a Bianchi.
+ */
+const PDR_BIANCHI: Pick<Pdr, 'nome'> = { nome: 'BIANCHI COMÉRCIO DE GRÃOS S/A' }
+export const COD_VISITA_BIANCHI = 295510
+
+function aplicarPdrsFixosNasVisitas(visitas: Visita[]): Visita[] {
+  return visitas.map((v) =>
+    v.cod === COD_VISITA_BIANCHI ? { ...v, pdr: { ...v.pdr, ...PDR_BIANCHI } } : v,
+  )
+}
+
+export const VISITAS_INICIAIS: Visita[] = aplicarPdrsFixosNasVisitas([
+  ...gerarVisitas(260),
+  VISITA_TESTE_MUNICIPIO_PAULISTA,
+])
 
 const NOMES_MES = [
   'Jan',
@@ -1401,3 +1417,9 @@ function gerarOcorrenciasCampoIniciais(): OcorrenciaCampo[] {
 }
 
 export const OCORRENCIAS_CAMPO_INICIAIS: OcorrenciaCampo[] = gerarOcorrenciasCampoIniciais()
+
+/** visitas das quais as ocorrências de demonstração dependem — a web precisa delas no cache/banco */
+export function visitasSementeDasOcorrencias(): Visita[] {
+  const cods = new Set(OCORRENCIAS_CAMPO_INICIAIS.map((o) => o.visitaCod))
+  return VISITAS_INICIAIS.filter((v) => cods.has(v.cod))
+}
