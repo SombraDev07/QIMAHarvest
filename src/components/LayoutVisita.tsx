@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, Outlet, useParams } from 'react-router-dom'
+import { Link, Navigate, Outlet, useParams } from 'react-router-dom'
 import { LogoQima } from './Logo'
 import { Modal, Toast } from './ui'
 import { IconLink, IconLista, IconLog } from './icons'
@@ -10,6 +10,7 @@ import MinhaSenha from './MinhaSenha'
 import BotaoSair from './BotaoSair'
 import SeletorIdioma from './SeletorIdioma'
 import LogAlteracoes from './LogAlteracoes'
+import { ehPerfilRtv } from '../types'
 
 /** copia com fallback para navegadores sem permissão de clipboard */
 async function copiar(texto: string): Promise<boolean> {
@@ -43,6 +44,8 @@ export default function LayoutVisita() {
   /** aberto quando o navegador bloqueia a cópia automática */
   const [linkManual, setLinkManual] = useState(false)
   const [mostrarLog, setMostrarLog] = useState(false)
+
+  if (ehPerfilRtv(usuario.perfil)) return <Navigate to="/ocorrencias" replace />
 
   const meta = visita ? situacaoPorId(visita.situacao) : null
   const link = window.location.href

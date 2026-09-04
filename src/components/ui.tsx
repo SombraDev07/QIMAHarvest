@@ -54,6 +54,17 @@ export function SituacaoBadge({ id }: { id: SituacaoId }) {
 }
 
 /* --------------------------------------------------------------- */
+/** badge de cor livre — para status/categorias que não têm um componente próprio como SituacaoBadge */
+export function Badge({ cor, texto }: { cor: string; texto: string }) {
+  return (
+    <span className="badge" style={{ color: cor, borderColor: `${cor}44`, background: `${cor}12` }}>
+      <i className="badge__dot" />
+      {texto}
+    </span>
+  )
+}
+
+/* --------------------------------------------------------------- */
 export function KV({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>

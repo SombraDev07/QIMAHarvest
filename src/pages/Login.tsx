@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { LogoQima } from '../components/Logo'
-import { autenticar, useSessaoAtiva } from '../store'
+import { autenticar, obterUsuarioLogado, useSessaoAtiva } from '../store'
+import { rotaInicial, rotaPermitida } from '../types'
 import { useT } from '../i18n'
 
 export default function Login() {
@@ -16,7 +17,10 @@ export default function Login() {
 
   if (logado) {
     const from = (location.state as { from?: string } | null)?.from
-    return <Navigate to={from && from !== '/login' ? from : '/visitas'} replace />
+    const perfil = obterUsuarioLogado().perfil
+    const destino =
+      from && from !== '/login' && rotaPermitida(perfil, from) ? from : rotaInicial(perfil)
+    return <Navigate to={destino} replace />
   }
 
   function enviar(e: FormEvent) {
@@ -30,7 +34,10 @@ export default function Login() {
       return
     }
     const from = (location.state as { from?: string } | null)?.from
-    navigate(from && from !== '/login' ? from : '/visitas', { replace: true })
+    const perfil = obterUsuarioLogado().perfil
+    const destino =
+      from && from !== '/login' && rotaPermitida(perfil, from) ? from : rotaInicial(perfil)
+    navigate(destino, { replace: true })
   }
 
   return (

@@ -1,12 +1,17 @@
 import type {
   Acumulado,
   AcumuladoPeriodo,
+  AnexoArquivo,
   Carga,
+  CategoriaOcorrenciaCampo,
   Classificacao,
+  ClassificacaoOcorrenciaCampo,
   DadosVisita,
+  EventoOcorrencia,
   HistoricoAcumulado,
   Mensagem,
   Ocorrencia,
+  OcorrenciaCampo,
   OrigemAcumulado,
   Pdr,
   PdrCatalogo,
@@ -14,7 +19,9 @@ import type {
   RecebimentoMes,
   Situacao,
   SituacaoId,
+  SituacaoOcorrenciaCampo,
   Solicitacao,
+  StatusOcorrenciaCampo,
   Usuario,
   Visita,
 } from '../types'
@@ -858,8 +865,8 @@ export const PDRS_CATALOGO_INICIAIS: PdrCatalogo[] = (() => {
 })()
 
 /* ------------------------------------------------------------------ *
- * Usuários — só os dois admins da operação. O restante nasce em
- * Administração → Usuários → Novo usuário.
+ * Usuários — os dois admins da operação e a conta RTV de demonstração.
+ * Os demais perfis nascem em Administração → Usuários → Novo usuário.
  * ------------------------------------------------------------------ */
 export const USUARIOS_INICIAIS: Usuario[] = [
   {
@@ -882,6 +889,17 @@ export const USUARIOS_INICIAIS: Usuario[] = [
     cpf: '123.456.787-39',
     email: 'ederlan.qima@qima.com',
     perfil: 'Admin',
+    situacao: 'Ativo',
+  },
+  {
+    id: 'U-003',
+    nome: 'Osvaldo Bittencourt',
+    login: 'Osvaldo.Rtv',
+    senha: 'Qima123',
+    telefone: '(11) 98888-4400',
+    cpf: '234.567.890-11',
+    email: 'osvaldo.rtv@cliente.com',
+    perfil: 'RTV (Client)',
     situacao: 'Ativo',
   },
 ]
@@ -975,3 +993,411 @@ export const SOLICITACOES_INICIAIS: Solicitacao[] = [
     ],
   },
 ]
+
+/* ------------------------------------------------------------------ *
+ * Ocorrências de campo — quadro por status, chat e observações por
+ * etapa. Ver comentário do tipo `OcorrenciaCampo` em types.ts: é um
+ * processo maior que a `Ocorrencia` simples já existente na aba 6 da
+ * visita, com COD, fila de tratamento e hierarquia próprios.
+ * ------------------------------------------------------------------ */
+export const SITUACOES_OCORRENCIA_CAMPO: SituacaoOcorrenciaCampo[] = [
+  {
+    id: 'pendente-central',
+    label: 'Pendente Central',
+    short: 'Pendente Central',
+    color: '#c2410c',
+    descricao: 'Aguardando triagem da Central de Informações',
+  },
+  {
+    id: 'operacao-pendente',
+    label: 'Operação Pendente',
+    short: 'Operação Pendente',
+    color: '#6d28d9',
+    descricao: 'Devolvida para o time de operação em campo',
+  },
+  {
+    id: 'rtv-pendente',
+    label: 'RTV Pendente',
+    short: 'RTV Pendente',
+    color: '#0369a1',
+    descricao: 'Aguardando manifestação do RTV',
+  },
+  {
+    id: 'finalizada',
+    label: 'Finalizada',
+    short: 'Finalizada',
+    color: '#0e8f6c',
+    descricao: 'Ocorrência tratada e encerrada',
+  },
+  {
+    id: 'cancelada',
+    label: 'Cancelada',
+    short: 'Cancelada',
+    color: '#5b6673',
+    descricao: 'Encerrada sem tratamento, com justificativa',
+  },
+]
+
+export const situacaoOcorrenciaCampoPorId = (id: StatusOcorrenciaCampo): SituacaoOcorrenciaCampo =>
+  SITUACOES_OCORRENCIA_CAMPO.find((s) => s.id === id) ?? SITUACOES_OCORRENCIA_CAMPO[0]
+
+export const CORES_CLASSIFICACAO_OCORRENCIA: Record<ClassificacaoOcorrenciaCampo, string> = {
+  Observação: '#1d4ed8',
+  'Ponto de Atenção': '#b45309',
+  'Erro Processual': '#c2410c',
+  Grave: '#dc2626',
+  'Ponto de atenção/Grave': '#9d174d',
+}
+
+/**
+ * Catálogo de categorias definido pela área de compliance, com a
+ * classificação "To Be" de cada uma — repassado pelo time de negócio.
+ */
+export const CATEGORIAS_OCORRENCIA_CAMPO: CategoriaOcorrenciaCampo[] = [
+  { tipo: 'Informação Inconsistente', classificacao: 'Ponto de Atenção' },
+  { tipo: 'Não Armazena As Fitas Utilizadas Corretamente', classificacao: 'Erro Processual' },
+  { tipo: 'Procedimento Do Teste Incorreto', classificacao: 'Erro Processual' },
+  { tipo: 'Não Passa Informação', classificacao: 'Ponto de Atenção' },
+  { tipo: 'Não Passa Informação – Recorrente nas grandes contas', classificacao: 'Observação' },
+  { tipo: 'Falta De Equipamentos / Equipamentos Avariados', classificacao: 'Ponto de Atenção' },
+  { tipo: 'Reteste Com Resultado Divergente', classificacao: 'Grave' },
+  { tipo: 'Fita Positiva E Romaneio Negativo', classificacao: 'Grave' },
+  { tipo: 'Entrada Não Autorizada', classificacao: 'Grave' },
+  { tipo: 'Não Realiza Testes', classificacao: 'Grave' },
+  { tipo: 'Alteração Na Amostra Coletada', classificacao: 'Grave' },
+  { tipo: 'Proibido De Acompanhar O Procedimento', classificacao: 'Grave' },
+  { tipo: 'Fitas Prontas', classificacao: 'Grave' },
+  { tipo: 'Assédio', classificacao: 'Grave' },
+  { tipo: 'Agressão Verbal', classificacao: 'Grave' },
+  { tipo: 'Tentativa De Suborno', classificacao: 'Grave' },
+  { tipo: 'Agressão Física', classificacao: 'Grave' },
+  { tipo: 'Ameaça', classificacao: 'Grave' },
+  { tipo: 'Carga De Não Participante, Registrada Como Participante', classificacao: 'Grave' },
+  { tipo: 'Discriminação', classificacao: 'Grave' },
+  { tipo: 'Outros', classificacao: 'Ponto de atenção/Grave' },
+]
+
+export const categoriaOcorrenciaCampoPorTipo = (tipo: string): CategoriaOcorrenciaCampo | undefined =>
+  CATEGORIAS_OCORRENCIA_CAMPO.find((c) => c.tipo === tipo)
+
+/** RTVs de exemplo — a Visita ainda não cadastra esse papel (ver comentário em types.ts) */
+const NOMES_RTV = ['Osvaldo Bittencourt', 'Fernanda Aquino']
+
+const visitaPorCod = (cod: number): Visita =>
+  VISITAS_INICIAIS.find((v) => v.cod === cod) ?? VISITAS_INICIAIS[0]
+
+/** primeiro romaneio real da visita, para a ocorrência apontar para algo que existe de fato */
+const primeiroRomaneio = (cod: number): string | undefined =>
+  visitaPorCod(cod).cargas.find((c) => c.romaneio)?.romaneio
+
+/**
+ * Semente de demonstração: como ainda não existem ocorrências reais vindas
+ * do tablet, os 9 registros abaixo cobrem as 5 colunas do quadro, os dois
+ * casos com/sem romaneio e uma 2ª passagem pela Central (campo `rodada`,
+ * mesmo mecanismo do fluxo de Visitas). Todas apontam para visitas que
+ * realmente existem em VISITAS_INICIAIS.
+ */
+function gerarOcorrenciasCampoIniciais(): OcorrenciaCampo[] {
+  type Semente = {
+    numero: number
+    visitaCod: number
+    categoria: string
+    status: StatusOcorrenciaCampo
+    rodada: number
+    comRomaneio: boolean
+    obsOcorrencia: string
+    obsAnalista?: string
+    obsLider?: string
+    obsRtv?: string
+    rtv?: string
+    motivo?: string
+    criadoEm: string
+    anexos?: { nome: string; tamanho: number; tipo: string }[]
+    chat?: { autor: string; papel: string; texto: string; ts: string }[]
+  }
+
+  const sementes: Semente[] = [
+    {
+      numero: 8001,
+      visitaCod: 295428,
+      categoria: 'Reteste Com Resultado Divergente',
+      status: 'pendente-central',
+      rodada: 1,
+      comRomaneio: true,
+      obsOcorrencia:
+        'Consultor registrou pelo tablet que o reteste da amostra apontou resultado diferente do teste original, sem justificativa da unidade no momento da visita.',
+      criadoEm: '2026-08-06T08:40:00',
+    },
+    {
+      numero: 8002,
+      visitaCod: 295429,
+      categoria: 'Não Passa Informação',
+      status: 'operacao-pendente',
+      rodada: 1,
+      comRomaneio: false,
+      obsOcorrencia:
+        'Responsável pela unidade não retornou contato durante a visita para esclarecer o acumulado divergente.',
+      obsAnalista:
+        'Central confirmou a inconsistência e encaminhou para a Operação apurar em campo com o responsável da unidade.',
+      criadoEm: '2026-08-05T10:15:00',
+      chat: [
+        {
+          autor: ANALISTA,
+          papel: 'Analista',
+          texto: 'Encaminhei para a Operação verificar com o responsável da unidade. Aguardando retorno.',
+          ts: '2026-08-05T11:02:00',
+        },
+      ],
+    },
+    {
+      numero: 8003,
+      visitaCod: 295435,
+      categoria: 'Falta De Equipamentos / Equipamentos Avariados',
+      status: 'pendente-central',
+      rodada: 2,
+      comRomaneio: true,
+      obsOcorrencia: 'Balança da unidade apresentou pane durante a pesagem de duas cargas do rateio.',
+      obsAnalista: 'Devolvida à Operação em 04/08 para confirmar substituição do equipamento.',
+      obsLider: 'Líder confirmou visita técnica agendada com o fornecedor da balança para esta semana.',
+      criadoEm: '2026-08-03T09:20:00',
+      chat: [
+        {
+          autor: 'Cesar Monteiro',
+          papel: 'Líder',
+          texto: 'Fornecedor já foi acionado, deve normalizar até quinta-feira.',
+          ts: '2026-08-06T14:10:00',
+        },
+        {
+          autor: ANALISTA,
+          papel: 'Analista',
+          texto: 'Perfeito, deixo em acompanhamento e reabro se não resolver até lá.',
+          ts: '2026-08-06T15:00:00',
+        },
+      ],
+    },
+    {
+      numero: 8004,
+      visitaCod: 295442,
+      categoria: 'Assédio',
+      status: 'rtv-pendente',
+      rodada: 1,
+      comRomaneio: false,
+      obsOcorrencia:
+        'Consultora relatou pelo tablet comportamento inadequado de um colaborador da unidade durante a visita.',
+      obsAnalista: 'Caso classificado como Grave — encaminhado imediatamente para o RTV, sem aguardar a Operação.',
+      obsLider: 'Líder orientado a acompanhar a consultora nas próximas visitas a esta unidade até a apuração.',
+      rtv: NOMES_RTV[0],
+      criadoEm: '2026-08-02T16:45:00',
+      anexos: [
+        { nome: 'relato-consultora.pdf', tamanho: 184_320, tipo: 'application/pdf' },
+        { nome: 'foto-unidade.jpg', tamanho: 1_248_512, tipo: 'image/jpeg' },
+      ],
+      chat: [
+        {
+          autor: 'Helena Duarte',
+          papel: 'Líder',
+          texto: 'Já conversei com a consultora, ela está bem e será acompanhada nas próximas visitas.',
+          ts: '2026-08-02T17:30:00',
+        },
+      ],
+    },
+    {
+      numero: 8005,
+      visitaCod: 295450,
+      categoria: 'Entrada Não Autorizada',
+      status: 'rtv-pendente',
+      rodada: 1,
+      comRomaneio: true,
+      obsOcorrencia: 'Consultor não obteve autorização de acesso à área de pesagem no horário informado pela unidade.',
+      obsAnalista: 'Encaminhada direto ao RTV por se tratar de restrição de acesso recorrente nesta unidade.',
+      rtv: NOMES_RTV[1],
+      criadoEm: '2026-08-01T13:10:00',
+    },
+    {
+      numero: 8006,
+      visitaCod: 295461,
+      categoria: 'Fita Positiva E Romaneio Negativo',
+      status: 'finalizada',
+      rodada: 1,
+      comRomaneio: true,
+      obsOcorrencia: 'Fita de teste marcada como positiva não corresponde à classificação negativa do romaneio.',
+      obsAnalista: 'Confirmado erro de lançamento no tablet; carga corrigida na base.',
+      obsLider: 'Líder reforçou com o consultor a conferência da fita antes do envio.',
+      obsRtv: 'RTV sem objeções — tratado como erro pontual de lançamento, sem reincidência na unidade.',
+      rtv: NOMES_RTV[0],
+      criadoEm: '2026-07-30T09:00:00',
+      chat: [
+        {
+          autor: ANALISTA,
+          papel: 'Analista',
+          texto: 'Carga corrigida na base após conferência com a fita física.',
+          ts: '2026-07-30T15:20:00',
+        },
+        {
+          autor: NOMES_RTV[0],
+          papel: 'RTV',
+          texto: 'Sem objeções, pode finalizar.',
+          ts: '2026-07-31T08:05:00',
+        },
+      ],
+    },
+    {
+      numero: 8007,
+      visitaCod: 295475,
+      categoria: 'Não Realiza Testes',
+      status: 'finalizada',
+      rodada: 2,
+      comRomaneio: false,
+      obsOcorrencia: 'Unidade recebeu cargas sem realizar os testes obrigatórios no início do turno.',
+      obsAnalista: 'Devolvida à Operação para orientar a unidade; retornou à Central após a segunda visita já regularizada.',
+      obsLider: 'Líder validou em campo que os testes voltaram a ser realizados normalmente.',
+      obsRtv: 'RTV ciente, sem necessidade de tratamento adicional.',
+      rtv: NOMES_RTV[1],
+      criadoEm: '2026-07-25T07:50:00',
+    },
+    {
+      numero: 8008,
+      visitaCod: 295490,
+      categoria: 'Discriminação',
+      status: 'cancelada',
+      rodada: 1,
+      comRomaneio: false,
+      obsOcorrencia: 'Denúncia registrada pelo tablet sobre tratamento discriminatório na unidade.',
+      obsAnalista: 'Apuração da Central não confirmou o relato após entrevista com as partes envolvidas.',
+      motivo: 'Denúncia não confirmada após apuração da Central.',
+      criadoEm: '2026-07-20T11:30:00',
+    },
+    {
+      numero: 8009,
+      visitaCod: 295510,
+      categoria: 'Outros',
+      status: 'pendente-central',
+      rodada: 1,
+      comRomaneio: true,
+      obsOcorrencia: 'Consultor sinalizou situação atípica na unidade não coberta pelas categorias padrão — detalhado em campo livre do tablet.',
+      criadoEm: '2026-08-06T17:05:00',
+    },
+  ]
+
+  return sementes.map((s) => {
+    const visita = visitaPorCod(s.visitaCod)
+    const criadoEm = Date.parse(s.criadoEm)
+    const mensagens: Mensagem[] = (s.chat ?? []).map((m, i) => ({
+      id: `MSG-OCR-${s.numero}-${i + 1}`,
+      autor: m.autor,
+      papel: m.papel,
+      texto: m.texto,
+      ts: Date.parse(m.ts),
+      tipo: 'mensagem',
+    }))
+    const atualizadoEm = mensagens.length ? mensagens[mensagens.length - 1].ts : criadoEm
+    const tsAnalista = criadoEm + 3_600_000
+    const tsLider = criadoEm + 7_200_000
+    const tsRtv = criadoEm + 10_800_000
+
+    const historico: EventoOcorrencia[] = [
+      {
+        id: `EVT-OCR-${s.numero}-1`,
+        ts: criadoEm,
+        por: visita.consultor,
+        papel: 'Consultor',
+        etapa: 'Consultor',
+        acao: 'Registrou observação',
+        descricao: 'Observação original enviada pelo tablet em campo.',
+      },
+    ]
+    if (s.obsAnalista) {
+      historico.push({
+        id: `EVT-OCR-${s.numero}-2`,
+        ts: tsAnalista,
+        por: ANALISTA,
+        papel: 'Analista',
+        etapa: 'Analista',
+        acao: 'Iniciou revisão',
+        descricao: 'Revisão da Central registrada.',
+      })
+    }
+    if (s.obsLider) {
+      historico.push({
+        id: `EVT-OCR-${s.numero}-3`,
+        ts: tsLider,
+        por: visita.lider,
+        papel: 'Líder',
+        etapa: 'Líder',
+        acao: 'Salvou observação',
+        descricao: 'Acompanhamento do líder registrado.',
+      })
+    }
+    if (s.obsRtv) {
+      historico.push({
+        id: `EVT-OCR-${s.numero}-4`,
+        ts: tsRtv,
+        por: s.rtv ?? NOMES_RTV[0],
+        papel: 'RTV',
+        etapa: 'RTV',
+        acao: 'Salvou parecer',
+        descricao: 'Parecer do RTV registrado.',
+      })
+    }
+    if (s.status === 'finalizada') {
+      historico.push({
+        id: `EVT-OCR-${s.numero}-fim`,
+        ts: atualizadoEm,
+        por: s.rtv ?? ANALISTA,
+        papel: 'RTV',
+        etapa: 'RTV',
+        acao: 'Finalizou',
+        descricao: 'Ocorrência tratada e encerrada.',
+      })
+    }
+    if (s.status === 'cancelada') {
+      historico.push({
+        id: `EVT-OCR-${s.numero}-canc`,
+        ts: atualizadoEm,
+        por: ANALISTA,
+        papel: 'Analista',
+        etapa: 'Analista',
+        acao: 'Cancelou',
+        descricao: s.motivo ?? 'Ocorrência cancelada.',
+      })
+    }
+
+    const anexos: AnexoArquivo[] = (s.anexos ?? []).map((a, i) => ({
+      id: `ANX-OCR-${s.numero}-${i + 1}`,
+      nome: a.nome,
+      tamanho: a.tamanho,
+      tipo: a.tipo,
+      url: '',
+    }))
+
+    return {
+      id: `OCR-${s.numero}`,
+      numero: s.numero,
+      visitaCod: s.visitaCod,
+      romaneio: s.comRomaneio ? primeiroRomaneio(s.visitaCod) : undefined,
+      categoria: s.categoria,
+      status: s.status,
+      rodada: s.rodada,
+      dataHora: criadoEm,
+      obsOcorrencia: s.obsOcorrencia,
+      obsAnalista: s.obsAnalista
+        ? { texto: s.obsAnalista, por: ANALISTA, ts: tsAnalista }
+        : undefined,
+      obsLider: s.obsLider
+        ? { texto: s.obsLider, por: visita.lider, ts: tsLider }
+        : undefined,
+      obsRtv: s.obsRtv
+        ? { texto: s.obsRtv, por: s.rtv ?? NOMES_RTV[0], ts: tsRtv }
+        : undefined,
+      rtv: s.rtv,
+      motivo: s.motivo,
+      mensagens,
+      historico,
+      anexos,
+      criadoEm,
+      atualizadoEm,
+    }
+  })
+}
+
+export const OCORRENCIAS_CAMPO_INICIAIS: OcorrenciaCampo[] = gerarOcorrenciasCampoIniciais()

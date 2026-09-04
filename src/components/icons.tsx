@@ -246,6 +246,41 @@ export const IconSair = ({ size = 14 }: Props) => (
   </svg>
 )
 
+export const IconDocumento = ({ size = 18 }: Props) => (
+  <svg {...base(size)}>
+    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+    <path d="M14 2v6h6M8 13h8M8 17h8" />
+  </svg>
+)
+
+export const IconPessoa = ({ size = 18 }: Props) => (
+  <svg {...base(size)}>
+    <circle cx="12" cy="8" r="3.5" />
+    <path d="M5 20a7 7 0 0114 0" />
+  </svg>
+)
+
+export const IconPrancheta = ({ size = 18 }: Props) => (
+  <svg {...base(size)}>
+    <rect x="6" y="4" width="12" height="16" rx="2" />
+    <path d="M9 4.5h6v3H9zM9 11h6M9 15h4" />
+  </svg>
+)
+
+export const IconEscudo = ({ size = 18 }: Props) => (
+  <svg {...base(size)}>
+    <path d="M12 3l8 3v6c0 5-3.4 8.4-8 9.5C7.4 20.4 4 17 4 12V6l8-3z" />
+    <path d="M9 12l2 2 4-4" />
+  </svg>
+)
+
+export const IconCalendario = ({ size = 15 }: Props) => (
+  <svg {...base(size)}>
+    <rect x="3" y="5" width="18" height="16" rx="2" />
+    <path d="M8 3v4M16 3v4M3 10h18" />
+  </svg>
+)
+
 export const IconPlanilha = ({ size = 26 }: Props) => (
   <svg {...base(size)}>
     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />

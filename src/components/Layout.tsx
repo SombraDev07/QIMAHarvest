@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { LogoQima } from './Logo'
 import {
   IconAdmin,
@@ -17,6 +17,7 @@ import BotaoSair from './BotaoSair'
 import SeletorIdioma from './SeletorIdioma'
 import { useT } from '../i18n'
 import { useFalhaPersistencia, useUsuarioLogado } from '../store'
+import { ehPerfilRtv, rotaInicial, rotaPermitida } from '../types'
 
 const ABAS = [
   { to: '/administracao', label: 'Administração', Icone: IconAdmin },
@@ -34,8 +35,15 @@ const ABAS = [
 
 export default function Layout() {
   const usuario = useUsuarioLogado()
+  const location = useLocation()
   const t = useT()
   const falhaAoGravar = useFalhaPersistencia()
+  const abas = ehPerfilRtv(usuario.perfil) ? ABAS.filter((a) => a.to === '/ocorrencias') : ABAS
+
+  if (!rotaPermitida(usuario.perfil, location.pathname)) {
+    return <Navigate to={rotaInicial(usuario.perfil)} replace />
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -69,7 +77,7 @@ export default function Layout() {
       )}
 
       <nav className="nav">
-        {ABAS.map(({ to, label, Icone }) => (
+        {abas.map(({ to, label, Icone }) => (
           <NavLink
             key={to}
             to={to}

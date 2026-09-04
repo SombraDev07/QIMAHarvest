@@ -369,6 +369,39 @@ export const podeEditarVisita = (perfil: Perfil): boolean =>
 export const podeReabrirVisita = (perfil: Perfil): boolean =>
   perfil === 'Admin' || perfil === 'Information Analyst'
 
+/** observação de uma etapa da ocorrência de campo */
+export type CampoObsOcorrencia = 'obsAnalista' | 'obsLider' | 'obsRtv'
+
+/**
+ * Quem edita cada etapa da observação de campo. Admin entra em todas;
+ * analista só na revisão da Central; líder só na dele; RTV só no parecer.
+ */
+export function podeEditarObsOcorrencia(perfil: Perfil, campo: CampoObsOcorrencia): boolean {
+  if (perfil === 'Admin') return true
+  if (campo === 'obsAnalista') return perfil === 'Information Analyst'
+  if (campo === 'obsLider') return perfil === 'Operational Leader' || perfil === 'Strategic Leader'
+  return perfil === 'RTV (Client)'
+}
+
+export const ehPerfilRtv = (perfil: Perfil): boolean => perfil === 'RTV (Client)'
+
+export function rotaInicial(perfil: Perfil): string {
+  return ehPerfilRtv(perfil) ? '/ocorrencias' : '/visitas'
+}
+
+/** o RTV só entra em Ocorrências — qualquer outra rota cai na home dele */
+export function rotaPermitida(perfil: Perfil, pathname: string): boolean {
+  if (!ehPerfilRtv(perfil)) return true
+  return pathname === '/ocorrencias' || pathname.startsWith('/ocorrencia/')
+}
+
+export function papelConversaOcorrencia(perfil: Perfil): string {
+  if (perfil === 'RTV (Client)') return 'RTV'
+  if (perfil === 'Information Analyst') return 'Analista'
+  if (perfil === 'Operational Leader' || perfil === 'Strategic Leader') return 'Líder'
+  return perfil
+}
+
 export interface Usuario {
   id: string
   nome: string
@@ -550,3 +583,132 @@ export interface ParametrosRegras {
 }
 
 export type VisaoProvedor = 'desligado' | 'gemini' | 'openai' | 'webhook'
+
+/* ================================================================= *
+ * Ocorrências de campo — fluxo de tratamento das ocorrências abertas
+ * pelo tablet em campo (COD próprio, vinculadas a uma visita e, às
+ * vezes, a um romaneio), com quadro por status, chat e observações
+ * separadas por etapa. Não confundir com `Ocorrencia` acima: aquele é
+ * o registro simples já existente na aba 6 da visita (tipo/gravidade
+ * ligados a uma carga); este é o processo maior, com COD, fila e
+ * tratamento próprios.
+ * ================================================================= */
+export type StatusOcorrenciaCampo =
+  | 'pendente-central'
+  | 'operacao-pendente'
+  | 'rtv-pendente'
+  | 'finalizada'
+  | 'cancelada'
+
+export interface SituacaoOcorrenciaCampo {
+  id: StatusOcorrenciaCampo
+  label: string
+  short: string
+  color: string
+  descricao: string
+}
+
+/** classificação "To Be" definida pela área de compliance para cada categoria */
+export type ClassificacaoOcorrenciaCampo =
+  | 'Observação'
+  | 'Ponto de Atenção'
+  | 'Erro Processual'
+  | 'Grave'
+  | 'Ponto de atenção/Grave'
+
+export interface CategoriaOcorrenciaCampo {
+  tipo: string
+  classificacao: ClassificacaoOcorrenciaCampo
+}
+
+/** observação de uma etapa — guarda quem escreveu e quando, não só o texto */
+export interface ObservacaoOcorrencia {
+  texto: string
+  por: string
+  ts: number
+}
+
+/** uma linha do histórico/atividade da ocorrência — criação, mudança de status, observação salva... */
+export interface EventoOcorrencia {
+  id: string
+  ts: number
+  por: string
+  /** perfil de quem fez, ex.: Information Analyst */
+  papel?: string
+  /** etapa do fluxo, ex.: Analista */
+  etapa?: string
+  /** verbo curto da tabela de histórico, ex.: Salvou revisão */
+  acao?: string
+  descricao: string
+}
+
+export interface OcorrenciaCampo {
+  id: string
+  /** número curto exibido no card e no detalhe — o COD da ocorrência, ex.: #8004 */
+  numero: number
+  /** COD da visita à qual a ocorrência está vinculada */
+  visitaCod: number
+  /** romaneio da carga relacionada, quando existir */
+  romaneio?: string
+  /** categoria — chave em CATEGORIAS_OCORRENCIA_CAMPO */
+  categoria: string
+  status: StatusOcorrenciaCampo
+  /**
+   * quantas vezes já passou pela Central. Começa em 1 e sobe quando a
+   * Operação devolve — mesmo mecanismo do campo `rodada` de Visita.
+   */
+  rodada: number
+  /** quando a ocorrência foi registrada em campo pelo tablet */
+  dataHora: number
+  /** observação original da ocorrência, vinda do tablet */
+  obsOcorrencia: string
+  /** observação de quem padroniza/trata a ocorrência na Central */
+  obsAnalista?: ObservacaoOcorrencia
+  obsLider?: ObservacaoOcorrencia
+  obsRtv?: ObservacaoOcorrencia
+  /**
+   * nome do RTV vinculado à ocorrência. Hoje é texto livre: a Visita
+   * ainda não tem esse papel cadastrado como consultor/líder/supervisor têm.
+   */
+  rtv?: string
+  /** motivo do cancelamento */
+  motivo?: string
+  mensagens: Mensagem[]
+  /** linha do tempo da ocorrência — criação, transições de status, observações salvas */
+  historico: EventoOcorrencia[]
+  /** evidências da ocorrência (fotos do tablet, laudos, etc.) */
+  anexos: AnexoArquivo[]
+  criadoEm: number
+  atualizadoEm: number
+}
+
+export const STATUS_FILA_RTV: readonly StatusOcorrenciaCampo[] = ['rtv-pendente', 'finalizada']
+
+function mencionaRtv(valor?: string): boolean {
+  return (valor ?? '').toLowerCase().includes('rtv')
+}
+
+/** passou pela etapa do RTV — parecer, nome vinculado, histórico ou chat */
+export function ocorrenciaTeveRtv(o: OcorrenciaCampo): boolean {
+  if (o.status === 'rtv-pendente') return true
+  if (o.obsRtv) return true
+  if (o.rtv?.trim()) return true
+  if ((o.historico ?? []).some((e) => mencionaRtv(e.etapa) || mencionaRtv(e.papel))) return true
+  return (o.mensagens ?? []).some((m) => mencionaRtv(m.papel))
+}
+
+/** fila do RTV: pendentes com ele + finalizadas que de fato passaram pelo RTV */
+export function ocorrenciaVisivelParaRtv(o: OcorrenciaCampo): boolean {
+  if (o.status === 'rtv-pendente') return true
+  return o.status === 'finalizada' && ocorrenciaTeveRtv(o)
+}
+
+export function mensagemVisivelParaRtv(m: Pick<Mensagem, 'papel'>): boolean {
+  const p = (m.papel ?? '').toLowerCase()
+  return p.includes('analista') || p.includes('information analyst') || p.includes('rtv')
+}
+
+export function eventoVisivelParaRtv(e: Pick<EventoOcorrencia, 'etapa' | 'papel'>): boolean {
+  const t = `${e.etapa ?? ''} ${e.papel ?? ''}`.toLowerCase()
+  return t.includes('analista') || t.includes('information analyst') || t.includes('rtv')
+}

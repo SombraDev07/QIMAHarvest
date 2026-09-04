@@ -652,7 +652,8 @@ textarea {
 
 .field input:disabled,
 .field select:disabled,
-.field input[readonly] {
+.field input[readonly],
+.field textarea[readonly] {
   background: var(--surface-3);
   color: var(--text-muted);
   cursor: not-allowed;
@@ -661,6 +662,11 @@ textarea {
 .field__hint {
   font-size: 11.5px;
   color: var(--text-soft);
+}
+
+.field__hint svg {
+  vertical-align: -2px;
+  margin-right: 2px;
 }
 
 .field__hint--erro {
@@ -1788,6 +1794,121 @@ tr.in-group td:first-child {
   color: #0b7a5c;
 }
 
+/*
+ * Correção ortográfica "ao vivo" (offline, typo-js) — um <textarea>
+ * transparente por cima de uma <div> com o mesmo texto, onde as
+ * palavras não reconhecidas ganham sublinhado ondulado vermelho. As
+ * duas camadas precisam ter a mesma caixa (padding/borda/fonte) para o
+ * sublinhado cair exatamente embaixo da palavra real.
+ */
+.ortografia-campo {
+  position: relative;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ortografia-campo:focus-within {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(228, 0, 43, 0.13);
+}
+
+.ortografia-campo__overlay {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: normal;
+  color: transparent;
+  pointer-events: none;
+}
+
+/*
+ * duas classes (em vez de ".ortografia-campo textarea") de propósito:
+ * o campo aparece dentro de ".field" e também dentro do compositor do
+ * chat (".compositor__corpo textarea"), que já têm suas próprias
+ * regras para "textarea" — sem essa especificidade a nossa perderia
+ * para elas dependendo da ordem no arquivo, e o campo perderia a caixa
+ * idêntica à do overlay que faz o sublinhado encaixar certo.
+ */
+.ortografia-campo .ortografia-campo__input {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  margin: 0;
+  padding: 8px 10px;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  outline: none;
+  font-size: 13.5px;
+  line-height: normal;
+  resize: vertical;
+}
+
+.ortografia-campo__erro {
+  background: transparent;
+  color: transparent;
+  text-decoration: underline wavy var(--err);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+
+/* menu de sugestões do botão direito — mesma ideia do corretor do Word */
+.ortografia-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 160px;
+  max-width: 260px;
+  padding: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+}
+
+.ortografia-menu__item {
+  text-align: left;
+  padding: 7px 9px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.ortografia-menu__item:hover {
+  background: var(--brand-050);
+  color: var(--brand-600);
+}
+
+.ortografia-menu__separador {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+.ortografia-menu__ignorar {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.ortografia-menu__vazio {
+  padding: 7px 9px;
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+
 .chip--warn {
   background: #fdf1e8;
   border-color: #f5d0b5;
@@ -2183,6 +2304,45 @@ tr.in-group td:first-child {
   font-size: 14.5px;
   font-weight: 600;
   line-height: 1.4;
+}
+
+/* bloco de observação por etapa — ocorrências de campo */
+.obs-bloco {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--c, var(--brand));
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.obs-bloco + .obs-bloco {
+  margin-top: 12px;
+}
+
+.obs-bloco__topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13.5px;
+}
+
+.obs-bloco__titulo {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.obs-bloco__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c, var(--brand));
+  flex: none;
 }
 
 /* linha de pergunta do questionário */
@@ -5049,5 +5209,417 @@ tr.row-invalid td {
   }
   .login__panel {
     padding: 28px 22px 48px;
+  }
+}
+
+/* ==================================================================
+   Observação de Campo — detalhe da ocorrência
+   ================================================================== */
+.oc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.oc-head__titulo {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.oc-head__icone {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--brand-050);
+  color: var(--brand);
+  border: 1px solid var(--brand-100);
+  flex: none;
+}
+
+.oc-head h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+
+.oc-head p {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+
+.oc-head__acoes {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.oc-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+
+.oc-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.oc-ajuda {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius-sm);
+  color: #1e3a8a;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.oc-ajuda strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.oc-ajuda p {
+  margin: 0;
+  color: #1e40af;
+}
+
+.oc-trilha {
+  display: flex;
+  flex-direction: column;
+}
+
+.oc-etapa {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.oc-etapa__eixo {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.oc-etapa__bolha {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--c, var(--blue));
+  color: #fff;
+  flex: none;
+  z-index: 1;
+  box-shadow: 0 0 0 4px var(--bg);
+}
+
+.oc-etapa__linha {
+  flex: 1;
+  width: 2px;
+  min-height: 18px;
+  background: var(--border-strong);
+  margin: 4px 0;
+}
+
+.oc-etapa__card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px 14px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.oc-etapa__topo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.oc-etapa__titulos {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.oc-etapa__titulos h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.oc-etapa__acoes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.oc-etapa__acoes-fim {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.oc-etapa__salvar {
+  background: var(--c, var(--brand));
+  color: #fff;
+}
+
+.oc-etapa__salvar:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.oc-etapa--fechada .oc-etapa__card {
+  background: var(--bg);
+}
+
+.oc-etapa__fechado {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.oc-abas {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.oc-abas .tabs {
+  margin-bottom: 14px;
+}
+
+.oc-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: sticky;
+  top: calc(var(--header-h) + var(--nav-h) + 12px);
+}
+
+.oc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 16px 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.oc-card h2 {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.oc-stepper {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.oc-stepper__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  padding: 0 0 16px;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text-soft);
+}
+
+.oc-stepper__item:last-child {
+  padding-bottom: 0;
+}
+
+.oc-stepper__item:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 24px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+
+.oc-stepper__marca {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  border: 2px solid var(--border-strong);
+  flex: none;
+  z-index: 1;
+}
+
+.oc-stepper__item.is-feito {
+  color: var(--text);
+}
+
+.oc-stepper__item.is-feito .oc-stepper__marca {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+
+.oc-stepper__item.is-atual {
+  color: var(--blue);
+}
+
+.oc-stepper__item.is-atual .oc-stepper__marca {
+  background: #fff;
+  border-color: var(--blue);
+  color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.16);
+}
+
+.oc-info {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.oc-info li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.oc-info svg {
+  margin-top: 3px;
+  color: var(--text-soft);
+  flex: none;
+}
+
+.oc-info small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
+.oc-info strong {
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.oc-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.oc-feed li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.oc-feed__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brand);
+  margin-top: 6px;
+  flex: none;
+}
+
+.oc-feed strong {
+  display: block;
+  font-weight: 650;
+}
+
+.oc-feed span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.oc-anexos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.oc-anexos li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.oc-anexos div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ortografia-campo:has(.ortografia-campo__input[readonly]) {
+  background: var(--surface-2);
+}
+
+@media (max-width: 1100px) {
+  .oc-layout {
+    grid-template-columns: 1fr;
+  }
+  .oc-side {
+    position: static;
   }
 }

@@ -14,8 +14,20 @@ import {
   obterUsuarios,
   removerUsuario,
 } from './store'
-import { USUARIOS_INICIAIS } from './data/mock'
-import { PERFIS, podeEditarVisita, podeReabrirVisita, type Perfil, type Usuario } from './types'
+import { USUARIOS_INICIAIS, OCORRENCIAS_CAMPO_INICIAIS } from './data/mock'
+import {
+  PERFIS,
+  ehPerfilRtv,
+  mensagemVisivelParaRtv,
+  ocorrenciaVisivelParaRtv,
+  podeEditarObsOcorrencia,
+  podeEditarVisita,
+  podeReabrirVisita,
+  rotaInicial,
+  rotaPermitida,
+  type Perfil,
+  type Usuario,
+} from './types'
 import {
   coordenadaValida,
   cpfValido,
@@ -52,6 +64,19 @@ describe('perfis de acesso', () => {
     expect(podeReabrirVisita('Auditor')).toBe(false)
   })
 
+  it('Admin edita todas as etapas da ocorrência; analista só a revisão da Central', () => {
+    expect(podeEditarObsOcorrencia('Admin', 'obsAnalista')).toBe(true)
+    expect(podeEditarObsOcorrencia('Admin', 'obsLider')).toBe(true)
+    expect(podeEditarObsOcorrencia('Admin', 'obsRtv')).toBe(true)
+    expect(podeEditarObsOcorrencia('Information Analyst', 'obsAnalista')).toBe(true)
+    expect(podeEditarObsOcorrencia('Information Analyst', 'obsLider')).toBe(false)
+    expect(podeEditarObsOcorrencia('Information Analyst', 'obsRtv')).toBe(false)
+    expect(podeEditarObsOcorrencia('Operational Leader', 'obsLider')).toBe(true)
+    expect(podeEditarObsOcorrencia('Operational Leader', 'obsAnalista')).toBe(false)
+    expect(podeEditarObsOcorrencia('RTV (Client)', 'obsRtv')).toBe(true)
+    expect(podeEditarObsOcorrencia('RTV (Client)', 'obsLider')).toBe(false)
+  })
+
   it('os demais perfis abrem a visita em leitura', () => {
     const leitura: Perfil[] = [
       'Support',
@@ -66,12 +91,14 @@ describe('perfis de acesso', () => {
     for (const p of leitura) expect(podeEditarVisita(p), p).toBe(false)
   })
 
-  it('a base nasce com os dois administradores da operação', () => {
-    expect(USUARIOS_INICIAIS).toHaveLength(2)
-    expect(USUARIOS_INICIAIS.every((u) => u.perfil === 'Admin')).toBe(true)
+  it('a base nasce com os dois administradores e a conta RTV', () => {
+    expect(USUARIOS_INICIAIS).toHaveLength(3)
+    expect(USUARIOS_INICIAIS.filter((u) => u.perfil === 'Admin')).toHaveLength(2)
+    expect(USUARIOS_INICIAIS.some((u) => u.perfil === 'RTV (Client)')).toBe(true)
     expect(USUARIOS_INICIAIS.map((u) => u.login.toLowerCase()).sort()).toEqual([
       'bruno.ferreira',
       'ederlan.qima',
+      'osvaldo.rtv',
     ])
   })
 })
@@ -215,16 +242,18 @@ describe('login e senha', () => {
     expect(loginJaCadastrado('')).toBe(false)
   })
 
-  it('os dois administradores já nascem com senha para entrar', () => {
+  it('as contas da semente já nascem com senha para entrar', () => {
     expect(USUARIOS_INICIAIS.every((u) => u.senha === 'Qima123')).toBe(true)
   })
 
-  it('autentica pelos dois admins, sem diferenciar caixa no login', () => {
+  it('autentica pelos admins e pelo RTV, sem diferenciar caixa no login', () => {
     expect(autenticar('bruno.ferreira', 'errada').ok).toBe(false)
     expect(autenticar('Bruno.Ferreira', 'Qima123')).toEqual({ ok: true })
     expect(obterUsuarioLogado().login.toLowerCase()).toBe('bruno.ferreira')
     expect(autenticar('ederlan.qima', 'Qima123').ok).toBe(true)
     expect(obterUsuarioLogado().login.toLowerCase()).toBe('ederlan.qima')
+    expect(autenticar('osvaldo.rtv', 'Qima123').ok).toBe(true)
+    expect(obterUsuarioLogado().perfil).toBe('RTV (Client)')
   })
 
   it('recusa conta inativa com a mesma mensagem genérica', () => {
@@ -369,5 +398,31 @@ describe('campos novos do PDR', () => {
 
   it('a observação nasce vazia no catálogo da base', () => {
     expect(obterPdrsCatalogo().every((p) => !p.observacao)).toBe(true)
+  })
+})
+
+describe('conta RTV', () => {
+  it('só entra em Ocorrências', () => {
+    expect(ehPerfilRtv('RTV (Client)')).toBe(true)
+    expect(rotaInicial('RTV (Client)')).toBe('/ocorrencias')
+    expect(rotaPermitida('RTV (Client)', '/ocorrencias')).toBe(true)
+    expect(rotaPermitida('RTV (Client)', '/ocorrencia/8004')).toBe(true)
+    expect(rotaPermitida('RTV (Client)', '/visitas')).toBe(false)
+    expect(rotaPermitida('Admin', '/visitas')).toBe(true)
+  })
+
+  it('vê só a fila RTV e finalizadas que passaram pelo RTV', () => {
+    const visiveis = OCORRENCIAS_CAMPO_INICIAIS.filter(ocorrenciaVisivelParaRtv)
+    expect(visiveis.every((o) => o.status === 'rtv-pendente' || o.status === 'finalizada')).toBe(true)
+    expect(visiveis.some((o) => o.status === 'rtv-pendente')).toBe(true)
+    expect(visiveis.filter((o) => o.status === 'finalizada').every((o) => o.obsRtv || o.rtv)).toBe(true)
+    expect(visiveis.some((o) => o.status === 'pendente-central')).toBe(false)
+    expect(visiveis.some((o) => o.status === 'cancelada')).toBe(false)
+  })
+
+  it('na conversa só enxerga analista e RTV', () => {
+    const mista = OCORRENCIAS_CAMPO_INICIAIS.find((o) => o.numero === 8004)!
+    expect(mista.mensagens.some((m) => m.papel === 'Líder')).toBe(true)
+    expect(mista.mensagens.filter(mensagemVisivelParaRtv).every((m) => /analista|rtv/i.test(m.papel))).toBe(true)
   })
 })

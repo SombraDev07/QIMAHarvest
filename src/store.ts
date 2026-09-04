@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import {
   VISITAS_INICIAIS,
+  OCORRENCIAS_CAMPO_INICIAIS,
   PDRS_CATALOGO_INICIAIS,
   SOLICITACOES_INICIAIS,
   USUARIOS_INICIAIS,
@@ -32,6 +33,8 @@ import {
   type GrupoRateio,
   type HistoricoAcumulado,
   type Mensagem,
+  type EventoOcorrencia,
+  type OcorrenciaCampo,
   type ParametrosRegras,
   type PdrCatalogo,
   type RelatorioAcumulado,
@@ -44,10 +47,13 @@ import {
   type Usuario,
   type Visita,
   type LogAlteracao,
+  type CampoObsOcorrencia,
   CLASSIFICACOES,
   SENHA_MIN,
   TIPO_OCORRENCIA_FITAS,
+  ehPerfilRtv,
   podeDefinirCredenciais,
+  podeEditarObsOcorrencia,
   podeEditarVisita,
 } from './types'
 import {
@@ -90,6 +96,8 @@ import {
  * ------------------------------------------------------------------ */
 const CHAVE_PERSISTENCIA = 'qima-harvest/estado'
 const CHAVE_SESSAO = 'qima-harvest/sessao'
+/** fila de ocorrência de campo ainda não tem tabela no Supabase — vive neste blob */
+const CHAVE_OCORRENCIAS_CAMPO = 'qima-harvest/ocorrencias-campo'
 /** v2: só os dois admins na semente; descartar os 13 usuários de demonstração */
 const VERSAO_PERSISTENCIA = 2
 /** tempo sem novas alterações antes de gravar — evita serializar a cada tecla */
@@ -108,6 +116,8 @@ interface EstadoPersistido {
   parametros: ParametrosRegras
   pdrs: PdrCatalogo[]
   solicitacoes: Solicitacao[]
+  /** ocorrências de campo — ver comentário da seção mais abaixo */
+  ocorrenciasCampo?: OcorrenciaCampo[]
   usuarios: Usuario[]
   usuarioLogadoId: string | null
   /**
@@ -278,6 +288,7 @@ function agendarGravacao() {
       parametros,
       pdrs: pdrsCatalogo,
       solicitacoes,
+      ocorrenciasCampo,
       usuarios,
       usuarioLogadoId,
       baseSubstituida,
@@ -308,6 +319,7 @@ export function limparPersistencia() {
   try {
     clearTimeout(gravacaoAgendada)
     localStorage.removeItem(CHAVE_PERSISTENCIA)
+    localStorage.removeItem(CHAVE_OCORRENCIAS_CAMPO)
   } catch {
     // nada a fazer: sem storage não há o que limpar
   }
@@ -1157,7 +1169,16 @@ export const percentualDesconto = (c: Carga): number =>
  * módulo) porque o perfil dele decide o que a visita deixa editar — trocar
  * de usuário precisa repintar a tela.
  * ------------------------------------------------------------------ */
-let usuarios: Usuario[] = persistido?.usuarios ?? USUARIOS_INICIAIS
+function mesclarUsuariosSemente(atuais: Usuario[]): Usuario[] {
+  const ids = new Set(atuais.map((u) => u.id))
+  const logins = new Set(atuais.map((u) => u.login.toLowerCase()))
+  const faltando = USUARIOS_INICIAIS.filter(
+    (u) => !ids.has(u.id) && !logins.has(u.login.toLowerCase()),
+  )
+  return faltando.length ? [...atuais, ...faltando] : atuais
+}
+
+let usuarios: Usuario[] = mesclarUsuariosSemente(persistido?.usuarios ?? USUARIOS_INICIAIS)
 const EM_TESTE = import.meta.env.MODE === 'test'
 
 function lerSessao(): string | null {
@@ -2082,6 +2103,316 @@ export function adicionarParticipante(id: string, nome: string) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Ocorrências de campo — quadro por status, chat e observações por
+ * etapa. Local por enquanto: ainda não existe uma tabela própria no
+ * Supabase (as ocorrências reais ainda não chegam do tablet) — quando
+ * existir, plugar aqui do mesmo jeito que solicitacoes.ts faz para
+ * Solicitação, sem mudar as telas.
+ *
+ * Em produção o boot lê o Postgres e deixa de gravar o blob inteiro no
+ * navegador. A fila demo (e as edições nela) precisa de chave própria,
+ * senão o F5 no Vercel esvazia a tela.
+ * ------------------------------------------------------------------ */
+function normalizarOcorrenciaCampo(o: OcorrenciaCampo): OcorrenciaCampo {
+  return {
+    ...o,
+    historico: o.historico ?? [],
+    anexos: o.anexos ?? [],
+    mensagens: o.mensagens ?? [],
+  }
+}
+
+function lerOcorrenciasCampoPersistidas(): OcorrenciaCampo[] {
+  if (temArmazenamento()) {
+    try {
+      const cru = localStorage.getItem(CHAVE_OCORRENCIAS_CAMPO)
+      if (cru) {
+        const lista = JSON.parse(cru) as OcorrenciaCampo[]
+        if (Array.isArray(lista) && lista.length) return lista
+      }
+    } catch {
+      // JSON corrompido: cai para o blob antigo ou para a semente
+    }
+  }
+  return persistido?.ocorrenciasCampo ?? []
+}
+
+/** a semente de demonstração entra se a fila estiver vazia ou se faltar um COD */
+function mesclarOcorrenciasSemente(atuais: OcorrenciaCampo[]): OcorrenciaCampo[] {
+  const normalizadas = atuais.map(normalizarOcorrenciaCampo)
+  const numeros = new Set(normalizadas.map((o) => o.numero))
+  const faltando = OCORRENCIAS_CAMPO_INICIAIS.filter((s) => !numeros.has(s.numero)).map(
+    normalizarOcorrenciaCampo,
+  )
+  if (normalizadas.length === 0) return OCORRENCIAS_CAMPO_INICIAIS.map(normalizarOcorrenciaCampo)
+  return faltando.length ? [...normalizadas, ...faltando] : normalizadas
+}
+
+function gravarOcorrenciasCampoLocal() {
+  if (!temArmazenamento()) return
+  try {
+    localStorage.setItem(CHAVE_OCORRENCIAS_CAMPO, JSON.stringify(ocorrenciasCampo))
+  } catch {
+    // cota ou modo privativo: a sessão segue em memória
+  }
+}
+
+let ocorrenciasCampo: OcorrenciaCampo[] = mesclarOcorrenciasSemente(lerOcorrenciasCampoPersistidas())
+const ouvintesOcorrenciasCampo = new Set<() => void>()
+let sequenciaOcorrenciaCampo = Math.max(0, ...ocorrenciasCampo.map((o) => o.numero))
+
+function notificarOcorrenciasCampo() {
+  gravarOcorrenciasCampoLocal()
+  ouvintesOcorrenciasCampo.forEach((fn) => fn())
+  agendarGravacao()
+}
+
+export function useOcorrenciasCampo(): OcorrenciaCampo[] {
+  return useSyncExternalStore(
+    (fn) => { ouvintesOcorrenciasCampo.add(fn); return () => ouvintesOcorrenciasCampo.delete(fn) },
+    () => ocorrenciasCampo,
+    () => ocorrenciasCampo,
+  )
+}
+
+/** rota /ocorrencia/:numero — a lista já foi carregada, então é só filtrar */
+export function useOcorrenciaCampo(numero: number): OcorrenciaCampo | undefined {
+  return useOcorrenciasCampo().find((o) => o.numero === numero)
+}
+
+function alterarOcorrenciaCampo(id: string, fn: (o: OcorrenciaCampo) => OcorrenciaCampo) {
+  ocorrenciasCampo = ocorrenciasCampo.map((o) => (o.id === id ? fn(o) : o))
+  notificarOcorrenciasCampo()
+}
+
+const LABEL_OBS: Record<CampoObsOcorrencia, string> = {
+  obsAnalista: 'Observação do Analista',
+  obsLider: 'Observação do Líder',
+  obsRtv: 'Parecer do RTV',
+}
+
+const ETAPA_OBS: Record<CampoObsOcorrencia, string> = {
+  obsAnalista: 'Analista',
+  obsLider: 'Líder',
+  obsRtv: 'RTV',
+}
+
+function atorOcorrencia() {
+  const u = obterUsuarioLogado()
+  return { por: u.nome, papel: u.perfil }
+}
+
+function recusarSeRtv(): boolean {
+  return ehPerfilRtv(obterUsuarioLogado().perfil)
+}
+
+/** empilha uma linha no histórico/atividade — junto da própria mudança, no mesmo patch */
+function comEvento(
+  o: OcorrenciaCampo,
+  por: string,
+  descricao: string,
+  ts: number,
+  extra?: Pick<EventoOcorrencia, 'papel' | 'etapa' | 'acao'>,
+): OcorrenciaCampo {
+  return {
+    ...o,
+    historico: [...(o.historico ?? []), { id: novoId(), ts, por, descricao, ...extra }],
+  }
+}
+
+/** Central manda para a Operação tratar em campo */
+export function enviarOcorrenciaParaOperacao(id: string) {
+  if (recusarSeRtv()) return
+  const { por, papel } = atorOcorrencia()
+  const agora = Date.now()
+  alterarOcorrenciaCampo(id, (o) =>
+    comEvento(
+      { ...o, status: 'operacao-pendente', atualizadoEm: agora },
+      por,
+      'Enviada para a Operação',
+      agora,
+      { papel, etapa: 'Analista', acao: 'Enviou para Operação' },
+    ),
+  )
+}
+
+/** Operação devolve para a Central — mesma regra de "rodada" usada no fluxo da visita: sobe 1 a cada volta */
+export function devolverOcorrenciaParaCentral(id: string) {
+  if (recusarSeRtv()) return
+  const { por, papel } = atorOcorrencia()
+  const agora = Date.now()
+  alterarOcorrenciaCampo(id, (o) =>
+    comEvento(
+      { ...o, status: 'pendente-central', rodada: o.rodada + 1, atualizadoEm: agora },
+      por,
+      `Devolvida para a Central (${o.rodada + 1}ª passagem)`,
+      agora,
+      { papel, etapa: 'Líder', acao: 'Devolveu para a Central' },
+    ),
+  )
+}
+
+/** encaminha para o RTV — a partir da Central ou já devolvida pela Operação */
+export function enviarOcorrenciaParaRtv(id: string) {
+  if (recusarSeRtv()) return
+  const { por, papel } = atorOcorrencia()
+  const agora = Date.now()
+  alterarOcorrenciaCampo(id, (o) =>
+    comEvento(
+      { ...o, status: 'rtv-pendente', atualizadoEm: agora },
+      por,
+      'Enviada para o RTV',
+      agora,
+      { papel, etapa: 'Analista', acao: 'Enviou para o RTV' },
+    ),
+  )
+}
+
+export function finalizarOcorrencia(id: string) {
+  const { por, papel } = atorOcorrencia()
+  const agora = Date.now()
+  alterarOcorrenciaCampo(id, (o) =>
+    comEvento(
+      { ...o, status: 'finalizada', atualizadoEm: agora },
+      por,
+      'Ocorrência finalizada',
+      agora,
+      { papel, etapa: 'RTV', acao: 'Finalizou' },
+    ),
+  )
+}
+
+export function cancelarOcorrencia(id: string, motivo: string) {
+  if (recusarSeRtv()) return
+  const { por, papel } = atorOcorrencia()
+  const agora = Date.now()
+  alterarOcorrenciaCampo(id, (o) =>
+    comEvento(
+      { ...o, status: 'cancelada', motivo, atualizadoEm: agora },
+      por,
+      `Ocorrência cancelada — ${motivo}`,
+      agora,
+      { papel, etapa: 'Analista', acao: 'Cancelou' },
+    ),
+  )
+}
+
+/** categoria muda a classificação de gravidade junto — ela é derivada da categoria em CATEGORIAS_OCORRENCIA_CAMPO */
+export function alterarCategoriaOcorrencia(id: string, categoria: string) {
+  if (recusarSeRtv()) return
+  const { por, papel } = atorOcorrencia()
+  const agora = Date.now()
+  alterarOcorrenciaCampo(id, (o) =>
+    comEvento(
+      { ...o, categoria, atualizadoEm: agora },
+      por,
+      `Categoria alterada para "${categoria}"`,
+      agora,
+      { papel, etapa: 'Analista', acao: 'Alterou categoria' },
+    ),
+  )
+}
+
+export type { CampoObsOcorrencia }
+
+/** grava a observação de uma etapa — cada perfil escreve só na sua própria coluna, com autoria e data */
+export function salvarObsOcorrencia(id: string, campo: CampoObsOcorrencia, texto: string, por: string) {
+  if (!podeEditarObsOcorrencia(obterUsuarioLogado().perfil, campo)) return
+  const agora = Date.now()
+  const limpo = texto.trim()
+  const papel = obterUsuarioLogado().perfil
+  alterarOcorrenciaCampo(id, (o) =>
+    comEvento(
+      { ...o, [campo]: limpo ? { texto: limpo, por, ts: agora } : undefined, atualizadoEm: agora },
+      por,
+      `${LABEL_OBS[campo]} ${o[campo] ? 'atualizada' : 'registrada'}`,
+      agora,
+      {
+        papel,
+        etapa: ETAPA_OBS[campo],
+        acao: o[campo] ? 'Atualizou observação' : 'Salvou observação',
+      },
+    ),
+  )
+}
+
+export function enviarMensagemOcorrencia(id: string, autor: string, papel: string, texto: string) {
+  const agora = Date.now()
+  alterarOcorrenciaCampo(id, (o) => ({
+    ...o,
+    atualizadoEm: agora,
+    mensagens: [...o.mensagens, { id: novoId(), autor, papel, texto, ts: agora, tipo: 'mensagem' }],
+  }))
+}
+
+export function adicionarAnexosOcorrencia(id: string, anexos: AnexoArquivo[]) {
+  if (anexos.length === 0 || recusarSeRtv()) return
+  const { por, papel } = atorOcorrencia()
+  const agora = Date.now()
+  const nomes = anexos.map((a) => a.nome).join(', ')
+  alterarOcorrenciaCampo(id, (o) =>
+    comEvento(
+      { ...o, anexos: [...(o.anexos ?? []), ...anexos], atualizadoEm: agora },
+      por,
+      anexos.length === 1 ? `Anexo "${nomes}" adicionado` : `${anexos.length} anexos adicionados (${nomes})`,
+      agora,
+      { papel, etapa: 'Anexos', acao: 'Anexou arquivo' },
+    ),
+  )
+}
+
+/**
+ * Cria uma ocorrência manualmente, vinculada a uma visita já existente no
+ * sistema. Provisório: hoje a fonte real é o tablet em campo — esta tela
+ * cobre o período em que o registro ainda não chega integrado.
+ */
+export function criarOcorrenciaCampo(dados: {
+  visitaCod: number
+  romaneio?: string
+  categoria: string
+  obsOcorrencia: string
+  dataHora: number
+  rtv?: string
+}): OcorrenciaCampo {
+  if (recusarSeRtv()) {
+    throw new Error('O perfil RTV não cadastra ocorrência.')
+  }
+  const agora = Date.now()
+  const numero = ++sequenciaOcorrenciaCampo
+  const { por, papel } = atorOcorrencia()
+  const nova: OcorrenciaCampo = {
+    id: novoId(),
+    numero,
+    visitaCod: dados.visitaCod,
+    romaneio: dados.romaneio?.trim() || undefined,
+    categoria: dados.categoria,
+    status: 'pendente-central',
+    rodada: 1,
+    dataHora: dados.dataHora,
+    obsOcorrencia: dados.obsOcorrencia.trim(),
+    rtv: dados.rtv?.trim() || undefined,
+    mensagens: [],
+    historico: [
+      {
+        id: novoId(),
+        ts: agora,
+        por,
+        papel,
+        etapa: 'Consultor',
+        acao: 'Registrou observação',
+        descricao: 'Ocorrência registrada manualmente no sistema.',
+      },
+    ],
+    anexos: [],
+    criadoEm: agora,
+    atualizadoEm: agora,
+  }
+  ocorrenciasCampo = [nova, ...ocorrenciasCampo]
+  notificarOcorrenciasCampo()
+  return nova
+}
+
+/* ------------------------------------------------------------------ *
  * Parâmetros — regras de análise da visita e mensagem padrão do chat,
  * configurados em Administração → Parâmetros
  * ------------------------------------------------------------------ */
@@ -2155,7 +2486,14 @@ export async function hidratarDoBanco(): Promise<void> {
     if (dados.pdrs.length) pdrsCatalogo = normalizarCatalogo(dados.pdrs)
     if (dados.parametros) parametros = completarParametros(dados.parametros)
     if (dados.usuarios.length) {
-      usuarios = dados.usuarios
+      usuarios = mesclarUsuariosSemente(dados.usuarios)
+      if (usuarios.length !== dados.usuarios.length) {
+        try {
+          await persistirUsuarios(usuarios)
+        } catch {
+          // schema antigo: a semente local ainda entra na sessão
+        }
+      }
     } else {
       usuarios = USUARIOS_INICIAIS
       try {
@@ -2200,6 +2538,7 @@ export async function hidratarDoBanco(): Promise<void> {
     ouvintesParametros.forEach((fn) => fn())
     ouvintesUsuarios.forEach((fn) => fn())
     ouvintesSolicitacoes.forEach((fn) => fn())
+    ouvintesOcorrenciasCampo.forEach((fn) => fn())
   }
 }
 
